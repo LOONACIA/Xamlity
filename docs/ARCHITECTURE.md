@@ -50,7 +50,7 @@ Core 내부는 다음 영역으로 나눈다. 폴더 이름은 네임스페이�
 
 `{}`로 시작하는 속성 값은 마크업 확장이 아닌 리터럴이다. IR의 `TextValue`에는 접두사를 포함한 원문을 보존하고, 파서 검증과 런타임 빌더가 공통으로 쓰는 `XamlValueConverter`에서 접두사만 제거한다. 확장 인자의 인용과 역슬래시 이스케이프는 파싱 중 해제하며, 해제된 값이 `{`로 시작하면 리터럴로 변환되도록 `{}` 접두사를 붙여 저장한다. 이 표현은 기존 IR v2 필드만 사용한다.
 
-값은 파서가 보존한 원문 문자열이며 런타임 빌더가 변환한다. 필드 추가·삭제·순서·인코딩 또는 값 해석의 호환성이 바뀌면 포맷 버전을 올리고 IR을 재임포트한다. 다른 매직·버전(v1 포함)이나 잘린 데이터는 `InvalidDataException`으로 거부한다. XAML 임포터 버전은 3이며, IR v2를 유지하면서 이미지 참조 테이블을 생성하도록 기존 에셋을 다시 임포트한다.
+값은 파서가 보존한 원문 문자열이며 런타임 빌더가 변환한다. 필드 추가·삭제·순서·인코딩 또는 값 해석의 호환성이 바뀌면 포맷 버전을 올리고 IR을 재임포트한다. 다른 매직·버전(v1 포함)이나 잘린 데이터는 `InvalidDataException`으로 거부한다. XAML 임포터 버전은 4이며, IR v2를 유지하면서 바인딩·clr-namespace·x:DataType 때문에 오류로 임포트된 기존 에셋도 새 규칙으로 다시 임포트한다.
 
 ## 레이어 규칙
 - 의존 방향은 `Xamlity.Editor → Xamlity.Unity → Xamlity.Core` 한 방향이다. Core는 다른 어셈블리를 모른다. 이유: Core를 Unity 없이 `dotnet test`로 검증하고, 다른 엔진으로 옮길 가능성을 열어 둔다.
@@ -71,7 +71,9 @@ Core 내부는 다음 영역으로 나눈다. 폴더 이름은 네임스페이�
       타입·프로퍼티 해석, x:DataType 바인딩 경로 검증
       에셋 경로 → UnityEngine.Object 참조 (IR에는 원문 문자열 유지, XamlAsset에 원문 값 → Object 참조 테이블)
       이미지 경로마다 존재하면 artifact 의존성, 없으면 소스 의존성 등록
-      참조한 어셈블리마다 커스텀 의존성 등록, 다른 XAML(MergedDictionaries 등)은 소스 의존성 등록
+      참조한 어셈블리마다 Xamlity/Assembly/<어셈블리 이름> 커스텀 의존성 연결 (파싱 오류 시에도 연결)
+      도메인 리로드 뒤 지연 콜백에서 스크립트 어셈블리 출력 DLL 내용의 Hash128을 등록하고 Refresh 예약
+      다른 XAML(MergedDictionaries 등)은 소스 의존성 등록
       오류 → ctx에 "파일(줄,열): 메시지"
   → XamlAsset (IR 바이트 + Object 참조 테이블)
   → OnPostprocessAllAssets: x:Class가 있으면 View.xaml.g.cs 생성 (내용이 바뀔 때만 씀)

@@ -11,13 +11,15 @@ using Object = UnityEngine.Object;
 
 namespace Xamlity.Editor
 {
-    [ScriptedImporter(3, "xaml")]
+    [ScriptedImporter(4, "xaml")]
     public sealed class XamlImporter : ScriptedImporter
     {
         public override void OnImportAsset(AssetImportContext ctx)
         {
             string text = File.ReadAllText(ctx.assetPath, Encoding.UTF8);
             XamlParseResult result = XamlParser.Parse(text, ctx.assetPath);
+            foreach (string assemblyName in result.ReferencedAssemblies)
+                ctx.DependsOnCustomDependency(XamlAssemblyDependencies.GetDependencyName(assemblyName));
             var asset = ScriptableObject.CreateInstance<XamlAsset>();
             asset.name = Path.GetFileNameWithoutExtension(ctx.assetPath);
             if (result.Errors.Count == 0)
