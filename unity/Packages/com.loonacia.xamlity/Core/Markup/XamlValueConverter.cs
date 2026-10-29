@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
+using Xamlity.Data;
 using Xamlity.Layout;
 using Xamlity.Properties;
 using Xamlity.Rendering;
@@ -16,14 +17,28 @@ namespace Xamlity.Markup
         {
             value = null;
             error = null;
-            if (text.TrimStart().StartsWith("{", StringComparison.Ordinal))
+            if (text.StartsWith("{}", StringComparison.Ordinal))
+                text = text.Substring(2);
+            else if (text.TrimStart().StartsWith("{", StringComparison.Ordinal))
             {
                 error = "Markup extensions are not supported.";
                 return false;
             }
 
-            if (targetType == typeof(string))
+            if (targetType == typeof(string) || targetType == typeof(object))
                 value = text;
+            else if (targetType == typeof(PropertyPath))
+            {
+                try
+                {
+                    value = new PropertyPath(text);
+                }
+                catch (ArgumentException exception)
+                {
+                    error = exception.Message;
+                    return false;
+                }
+            }
             else if (targetType == typeof(double))
             {
                 if ((dp == FrameworkElement.WidthProperty || dp == FrameworkElement.HeightProperty) &&
@@ -47,6 +62,8 @@ namespace Xamlity.Markup
                 try
                 {
                     value = new EnumConverter(targetType).ConvertFromInvariantString(text);
+                    if (targetType == typeof(BindingMode) && !Enum.IsDefined(targetType, value))
+                        value = null;
                 }
                 catch (FormatException)
                 {

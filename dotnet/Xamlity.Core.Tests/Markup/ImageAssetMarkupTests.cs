@@ -37,7 +37,6 @@ namespace Xamlity.Core.Tests.Markup
 
         [TestCase("")]
         [TestCase("   ")]
-        [TestCase("{Binding Image}")]
         [TestCase("  {StaticResource Image}")]
         public void InvalidImageValuesAreParseErrorsWithLocations(string value)
         {

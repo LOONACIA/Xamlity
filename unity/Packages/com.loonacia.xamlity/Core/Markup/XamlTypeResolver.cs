@@ -21,6 +21,7 @@ namespace Xamlity.Markup
             Type type = assembly.GetType("Xamlity.Controls." + name)
                 ?? assembly.GetType("Xamlity.Layout." + name)
                 ?? assembly.GetType("Xamlity.Rendering." + name)
+                ?? assembly.GetType("Xamlity.Data." + name)
                 ?? (requireConstructor ? null : assembly.GetType("Xamlity.Tree." + name));
             return type != null && type.IsPublic && type.IsClass && (!requireConstructor ||
                 (!type.IsAbstract && type.GetConstructor(Type.EmptyTypes) != null))

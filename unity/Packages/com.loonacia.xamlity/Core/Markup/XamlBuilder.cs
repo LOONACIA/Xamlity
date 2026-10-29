@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using Xamlity.Data;
 using Xamlity.Properties;
 using Xamlity.Rendering;
 using Xamlity.Tree;
@@ -73,7 +74,9 @@ namespace Xamlity.Markup
                     {
                         if (assetResolver == null)
                             throw new InvalidOperationException("ImageSource properties require an asset resolver.");
-                        value = assetResolver.ResolveImage(node.TextValue);
+                        if (!XamlValueConverter.TryConvert(node.TextValue, typeof(string), null, out object path, out string pathError))
+                            throw new InvalidOperationException(pathError);
+                        value = assetResolver.ResolveImage((string)path);
                     }
                     else if (!XamlValueConverter.TryConvert(node.TextValue, propertyType, dp, out value, out string error))
                         throw new InvalidOperationException(error);
@@ -101,7 +104,13 @@ namespace Xamlity.Markup
                         if (node.Objects.Count != 1)
                             throw new InvalidOperationException("A single content property requires exactly one object.");
                         object value = BuildObject(node.Objects[0], assetResolver);
-                        if (dp != null)
+                        if (value is Binding binding)
+                        {
+                            if (!(instance is FrameworkElement element) || dp == null)
+                                throw new InvalidOperationException("A 'Binding' can only be set on a dependency property of a FrameworkElement.");
+                            BindingOperations.SetBinding(element, dp, binding);
+                        }
+                        else if (dp != null)
                             ((DependencyObject)instance).SetValue(dp, value);
                         else
                             GetProperty(type, node.PropertyName).SetValue(instance, value);

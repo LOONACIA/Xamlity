@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using System.Xml;
+using Xamlity.Data;
 using Xamlity.Properties;
 using Xamlity.Rendering;
 using Xamlity.Tree;
@@ -57,7 +58,8 @@ namespace Xamlity.Markup
             }
 
             // Starts on an element and leaves the reader on the following node.
-            internal XamlObjectNode ReadObject(bool isRoot = false, Type targetType = null, string propertyName = null)
+            internal XamlObjectNode ReadObject(bool isRoot = false, Type targetType = null,
+                string propertyName = null, bool allowBinding = false)
             {
                 string name = reader.LocalName;
                 Type type = XamlTypeResolver.Resolve(reader.NamespaceURI, name);
@@ -75,7 +77,9 @@ namespace Xamlity.Markup
                     node.TypeName = $"{type.FullName}, {type.Assembly.GetName().Name}";
                     if (isRoot && !typeof(UIElement).IsAssignableFrom(type))
                         Error($"Root element '{name}' must be a UIElement.");
-                    if (targetType != null && !targetType.IsAssignableFrom(type))
+                    if (type == typeof(Binding) && !allowBinding)
+                        Error(BindingTargetError);
+                    else if (type != typeof(Binding) && targetType != null && !targetType.IsAssignableFrom(type))
                         Error($"Type '{name}' is not assignable to property '{propertyName}' of type '{targetType.Name}'.");
                 }
 
@@ -101,7 +105,7 @@ namespace Xamlity.Markup
                             ReadPropertyElement(type, node, assigned);
                             continue;
                         }
-                        if (type != null)
+                        if (type != null && XamlTypeResolver.Resolve(reader.NamespaceURI, reader.LocalName) != typeof(Binding))
                         {
                             if (contentName == null)
                                 Error($"Type '{name}' has no content property.");
@@ -146,6 +150,7 @@ namespace Xamlity.Markup
                         matchesOwner = true;
 
                 Type propertyType = null;
+                DependencyProperty dp = null;
                 if (reader.NamespaceURI != XamlTypeResolver.DefaultNamespace)
                     Error($"XML namespace '{reader.NamespaceURI}' is not supported.");
                 else if (ownerType != null)
@@ -154,7 +159,7 @@ namespace Xamlity.Markup
                         Error($"Attached property elements are not supported: '{name}'.");
                     else
                     {
-                        propertyType = XamlTypeResolver.ResolveProperty(ownerType, propertyName, out DependencyProperty dp, allowCollections: true);
+                        propertyType = XamlTypeResolver.ResolveProperty(ownerType, propertyName, out dp, allowCollections: true);
                         if (dp != null && dp.IsAttached)
                         {
                             Error($"Attached property elements are not supported: '{name}'.");
@@ -188,7 +193,8 @@ namespace Xamlity.Markup
                                 reader.Skip();
                             }
                             else
-                                node.Objects.Add(ReadObject(targetType: childType, propertyName: propertyName));
+                                node.Objects.Add(ReadObject(targetType: childType, propertyName: propertyName,
+                                    allowBinding: collection == null && IsBindingTarget(ownerType, dp)));
                         }
                         else
                         {
@@ -255,9 +261,9 @@ namespace Xamlity.Markup
                     {
                         if (type != null && !typeof(FrameworkElement).IsAssignableFrom(type))
                             Error($"x:Name is only supported on FrameworkElement types, not '{type.Name}'.");
-                        if (!XamlValueConverter.TryConvert(reader.Value, typeof(string), null, out _, out string error))
+                        if (!XamlValueConverter.TryConvert(reader.Value, typeof(string), null, out object value, out string error))
                             Error(error);
-                        node.Name = reader.Value;
+                        node.Name = value as string;
                         continue;
                     }
                     if (type == null)
@@ -272,7 +278,7 @@ namespace Xamlity.Markup
                             Error($"Unknown attached property '{name}' on type '{attachedOwner.Name}'.");
                             continue;
                         }
-                        if (!typeof(DependencyObject).IsAssignableFrom(type))
+                        if (!typeof(DependencyObject).IsAssignableFrom(type) && !IsMarkupExtension(reader.Value))
                         {
                             Error($"Attached properties require a DependencyObject, not '{type.Name}'.");
                             continue;
@@ -285,24 +291,97 @@ namespace Xamlity.Markup
                         if (!qualified && dp != null && dp.IsAttached)
                             propertyType = null;
                     }
-                    if (propertyType == null)
-                        Error($"Unknown or read-only property '{name}' on type '{type.Name}'.");
-                    else if (propertyType == typeof(ImageSource))
-                    {
-                        if (string.IsNullOrWhiteSpace(reader.Value))
-                            Error($"Property '{name}': Image asset paths must not be empty.");
-                        else if (reader.Value.TrimStart().StartsWith("{", StringComparison.Ordinal))
-                            Error($"Property '{name}': Markup extensions are not supported.");
-                        else
-                            assetReferences.Add(new XamlAssetReference(reader.Value,
-                                location.LineNumber, location.LinePosition));
-                    }
-                    else if (!XamlValueConverter.TryConvert(reader.Value, propertyType, dp, out _, out string error))
-                        Error($"Property '{name}': {error}");
-                    node.Properties.Add(new XamlPropertyNode { PropertyName = name, OwnerTypeName = ownerTypeName, TextValue = reader.Value,
-                        Line = location.LineNumber, Column = location.LinePosition });
+                    var property = new XamlPropertyNode { PropertyName = name, OwnerTypeName = ownerTypeName,
+                        Line = location.LineNumber, Column = location.LinePosition };
+                    ReadAttributeValue(type, propertyType, dp, property);
+                    node.Properties.Add(property);
                 }
                 reader.MoveToElement();
+            }
+
+            private const string BindingTargetError =
+                "A 'Binding' can only be set on a dependency property of a FrameworkElement.";
+
+            private static bool IsBindingTarget(Type type, DependencyProperty dp) =>
+                type != null && typeof(FrameworkElement).IsAssignableFrom(type) && dp != null;
+
+            private static bool IsMarkupExtension(string value) =>
+                !value.StartsWith("{}", StringComparison.Ordinal) &&
+                value.TrimStart().StartsWith("{", StringComparison.Ordinal);
+
+            private void ReadAttributeValue(Type type, Type propertyType, DependencyProperty dp, XamlPropertyNode property)
+            {
+                if (propertyType == null)
+                    Error($"Unknown or read-only property '{property.PropertyName}' on type '{type.Name}'.");
+                else if (IsMarkupExtension(reader.Value))
+                {
+                    XamlObjectNode binding = ReadBindingExtension(reader.Value.TrimStart());
+                    if (binding != null)
+                    {
+                        if (!IsBindingTarget(type, dp))
+                            Error(BindingTargetError);
+                        property.Objects.Add(binding);
+                    }
+                    return;
+                }
+                else
+                    ValidateText(property.PropertyName, reader.Value, propertyType, dp);
+                property.TextValue = reader.Value;
+            }
+
+            private void ValidateText(string name, string text, Type propertyType, DependencyProperty dp)
+            {
+                if (propertyType == typeof(ImageSource))
+                {
+                    XamlValueConverter.TryConvert(text, typeof(string), null, out object path, out _);
+                    if (string.IsNullOrWhiteSpace((string)path))
+                        Error($"Property '{name}': Image asset paths must not be empty.");
+                    else
+                        assetReferences.Add(new XamlAssetReference((string)path,
+                            location.LineNumber, location.LinePosition));
+                }
+                else if (!XamlValueConverter.TryConvert(text, propertyType, dp, out _, out string error))
+                    Error($"Property '{name}': {error}");
+            }
+
+            private XamlObjectNode ReadBindingExtension(string text)
+            {
+                if (!XamlMarkupExtensionParser.TryParse(text, out string name, out var arguments, out string error))
+                {
+                    Error(error);
+                    return null;
+                }
+                int separator = name.IndexOf(':');
+                string xmlNamespace = reader.LookupNamespace(separator < 0 ? "" : name.Substring(0, separator));
+                string localName = separator < 0 ? name : name.Substring(separator + 1);
+                if (XamlTypeResolver.Resolve(xmlNamespace, localName) != typeof(Binding))
+                {
+                    Error($"Markup extension '{name}' is not supported.");
+                    return null;
+                }
+                var binding = new XamlObjectNode { TypeName = $"{typeof(Binding).FullName}, {typeof(Binding).Assembly.GetName().Name}",
+                    Line = location.LineNumber, Column = location.LinePosition };
+                var assigned = new HashSet<string>(StringComparer.Ordinal);
+                int positionalCount = 0;
+                foreach (var argument in arguments)
+                {
+                    if (argument.Name == null && ++positionalCount > 1)
+                    {
+                        Error("Markup extension 'Binding' accepts at most one positional argument (Path).");
+                        return null;
+                    }
+                    string propertyName = argument.Name ?? "Path";
+                    if (!assigned.Add(propertyName))
+                        Error($"Property '{propertyName}' is set more than once.");
+                    Type propertyType = XamlTypeResolver.ResolveProperty(typeof(Binding), propertyName, out DependencyProperty dp);
+                    if (propertyType == null)
+                        Error($"Unknown or read-only property '{propertyName}' on type 'Binding'.");
+                    else
+                        ValidateText(propertyName, argument.Value, propertyType, dp);
+                    binding.Properties.Add(new XamlPropertyNode { PropertyName = propertyName, TextValue = argument.Value,
+                        Line = location.LineNumber, Column = location.LinePosition });
+                }
+                return binding;
             }
 
             private void Error(string message) =>

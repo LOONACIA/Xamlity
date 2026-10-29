@@ -46,6 +46,10 @@ Core 내부는 다음 영역으로 나눈다. 폴더 이름은 네임스페이�
 - 프로퍼티: `PropertyName`, `OwnerTypeName`, `Line`, `Column`, `TextValue`, 자식 객체 개수, 문서 순서의 자식 객체들. `OwnerTypeName`은 첨부 프로퍼티의 소유 타입을 `"<CLR 전체 이름>, <어셈블리 이름>"`으로 저장하고 일반 프로퍼티는 null이다.
 - 줄·열·개수는 int32이고, 문자열은 존재 여부 bool 1바이트 뒤에 값이 있으면 `BinaryWriter.Write(string)`의 7비트 가변 길이 바이트 수와 UTF-8 데이터를 쓴다(null과 빈 문자열 구분).
 
+`{Binding ...}` 속성은 `TextValue`가 null인 프로퍼티 노드와 그 `Objects`의 `Xamlity.Data.Binding` 객체 하나로 표현한다. 위치 인자는 `Path` 프로퍼티로 저장하며, 확장에서 생성한 모든 노드의 줄·열은 원래 속성 위치다. `<TextBlock.Text><Binding ... /></TextBlock.Text>`도 같은 구조이며 각 노드의 실제 XML 위치를 보존한다. 빌더는 Binding 객체 값을 `BindingOperations.SetBinding`으로 연결한다. 대상은 FrameworkElement의 DP(첨부 DP 포함)여야 하며 암시적 content 자식과 컬렉션 항목에는 Binding을 넣을 수 없다.
+
+`{}`로 시작하는 속성 값은 마크업 확장이 아닌 리터럴이다. IR의 `TextValue`에는 접두사를 포함한 원문을 보존하고, 파서 검증과 런타임 빌더가 공통으로 쓰는 `XamlValueConverter`에서 접두사만 제거한다. 확장 인자의 인용과 역슬래시 이스케이프는 파싱 중 해제하며, 해제된 값이 `{`로 시작하면 리터럴로 변환되도록 `{}` 접두사를 붙여 저장한다. 이 표현은 기존 IR v2 필드만 사용한다.
+
 값은 파서가 보존한 원문 문자열이며 런타임 빌더가 변환한다. 필드 추가·삭제·순서·인코딩 또는 값 해석의 호환성이 바뀌면 포맷 버전을 올리고 IR을 재임포트한다. 다른 매직·버전(v1 포함)이나 잘린 데이터는 `InvalidDataException`으로 거부한다. XAML 임포터 버전은 3이며, IR v2를 유지하면서 이미지 참조 테이블을 생성하도록 기존 에셋을 다시 임포트한다.
 
 ## 레이어 규칙

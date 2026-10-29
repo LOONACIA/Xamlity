@@ -178,7 +178,6 @@ namespace Xamlity.Core.Tests.Markup
         [TestCase("Canvas.Left.Extra=\"1\"", "Invalid property name 'Canvas.Left.Extra'; expected 'Owner.Property'.")]
         [TestCase("Canvas.=\"1\"", "Invalid property name 'Canvas.'; expected 'Owner.Property'.")]
         [TestCase("Canvas.Left=\"wrong\"", "Property 'Left': 'wrong' is not a valid Double value.")]
-        [TestCase("Canvas.Left=\"{Binding X}\"", "Property 'Left': Markup extensions are not supported.")]
         [TestCase("x:Class=\"View\"", "XAML directive 'x:Class' is not supported.")]
         [TestCase("x:Key=\"key\"", "XAML directive 'x:Key' is not supported.")]
         [TestCase("x:Type=\"Border\"", "XAML directive 'x:Type' is not supported.")]
@@ -191,7 +190,6 @@ namespace Xamlity.Core.Tests.Markup
         [TestCase("MinWidth=\"Auto\"", "Property 'MinWidth': 'Auto' is not a valid Double value.")]
         [TestCase("Child=\"TextBlock\"", "Property 'Child': Cannot convert text to type 'Xamlity.Tree.UIElement'.")]
         [TestCase("Background=\"nocolor\"", "Property 'Background': 'nocolor' is not a valid Brush value.")]
-        [TestCase("Name=\"{Binding Name}\"", "Property 'Name': Markup extensions are not supported.")]
         [TestCase("x:Name=\"{Binding Name}\"", "Markup extensions are not supported.")]
         public void ReportsAttributeErrorsAtAttributeName(string attribute, string message)
         {
