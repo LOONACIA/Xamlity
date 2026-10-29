@@ -15,6 +15,13 @@ namespace Xamlity.Unity
         private readonly List<Vector3> vertices = new List<Vector3>();
         private readonly List<Color32> colors = new List<Color32>();
         private readonly List<Vector2> uvs = new List<Vector2>();
+        // TEXCOORD1: local position (y down), outer half size. Zero size means no shape.
+        // TEXCOORD2/4: radii in top-left, top-right, bottom-right, bottom-left order.
+        // TEXCOORD3: inner center offset, inner half size. Zero size means no hole.
+        private readonly List<Vector4> shapeCoordinates = new List<Vector4>();
+        private readonly List<Vector4> outerRadii = new List<Vector4>();
+        private readonly List<Vector4> innerRectangles = new List<Vector4>();
+        private readonly List<Vector4> innerRadii = new List<Vector4>();
         private readonly List<int> indices = new List<int>();
         private readonly List<Batch> batches = new List<Batch>();
         private readonly List<DrawingState> stateStack = new List<DrawingState>();
@@ -59,6 +66,10 @@ namespace Xamlity.Unity
             vertices.Clear();
             colors.Clear();
             uvs.Clear();
+            shapeCoordinates.Clear();
+            outerRadii.Clear();
+            innerRectangles.Clear();
+            innerRadii.Clear();
             indices.Clear();
             batches.Clear();
             stateStack.Clear();
@@ -106,15 +117,39 @@ namespace Xamlity.Unity
 
         public void DrawRoundedRectangle(Brush brush, Rect rectangle, CornerRadius cornerRadius)
         {
+            DrawRoundedBorder(brush, rectangle, cornerRadius, default, default);
         }
 
         public void DrawRoundedBorder(Brush brush, Rect outerRectangle, CornerRadius outerCornerRadius,
             Rect innerRectangle, CornerRadius innerCornerRadius)
         {
+            if (!(brush is SolidColorBrush solid) || outerRectangle.Width <= 0 || outerRectangle.Height <= 0)
+                return;
+
+            var inner = Vector4.zero;
+            var radii = Vector4.zero;
+            if (innerRectangle.Width > 0 && innerRectangle.Height > 0)
+            {
+                inner = new Vector4(
+                    (float)((innerRectangle.X + innerRectangle.Width / 2 - outerRectangle.X - outerRectangle.Width / 2) * coordinateScale),
+                    (float)((innerRectangle.Y + innerRectangle.Height / 2 - outerRectangle.Y - outerRectangle.Height / 2) * coordinateScale),
+                    (float)(innerRectangle.Width / 2 * coordinateScale),
+                    (float)(innerRectangle.Height / 2 * coordinateScale));
+                radii = ScaleRadii(innerCornerRadius);
+            }
+            AddQuad(solid, outerRectangle, null, Vector2.zero, Vector2.zero,
+                true, ScaleRadii(outerCornerRadius), inner, radii);
         }
 
-        private void AddQuad(SolidColorBrush solid, Rect rect, Texture texture, Vector2 uvMin, Vector2 uvMax)
+        private Vector4 ScaleRadii(CornerRadius radius) => new Vector4(
+            (float)(radius.TopLeft * coordinateScale), (float)(radius.TopRight * coordinateScale),
+            (float)(radius.BottomRight * coordinateScale), (float)(radius.BottomLeft * coordinateScale));
+
+        private void AddQuad(SolidColorBrush solid, Rect rect, Texture texture, Vector2 uvMin, Vector2 uvMax,
+            bool hasShape = false, Vector4 outerRadius = default, Vector4 innerRectangle = default,
+            Vector4 innerRadius = default)
         {
+            Rect outerRectangle = rect;
             if (currentClip.HasValue)
             {
                 Rect clip = currentClip.Value;
@@ -158,12 +193,37 @@ namespace Xamlity.Unity
             uvs.Add(uvMax);
             uvs.Add(new Vector2(uvMax.x, uvMin.y));
             uvs.Add(uvMin);
+            if (hasShape)
+            {
+                double centerX = outerRectangle.X + outerRectangle.Width / 2;
+                double centerY = outerRectangle.Y + outerRectangle.Height / 2;
+                float localLeft = (float)((rect.Left - centerX) * coordinateScale);
+                float localRight = (float)((rect.Right - centerX) * coordinateScale);
+                float localTop = (float)((rect.Top - centerY) * coordinateScale);
+                float localBottom = (float)((rect.Bottom - centerY) * coordinateScale);
+                float halfWidth = (float)(outerRectangle.Width / 2 * coordinateScale);
+                float halfHeight = (float)(outerRectangle.Height / 2 * coordinateScale);
+                shapeCoordinates.Add(new Vector4(localLeft, localTop, halfWidth, halfHeight));
+                shapeCoordinates.Add(new Vector4(localRight, localTop, halfWidth, halfHeight));
+                shapeCoordinates.Add(new Vector4(localRight, localBottom, halfWidth, halfHeight));
+                shapeCoordinates.Add(new Vector4(localLeft, localBottom, halfWidth, halfHeight));
+            }
+            else
+            {
+                for (int i = 0; i < 4; i++)
+                    shapeCoordinates.Add(Vector4.zero);
+            }
             double opacity = currentOpacity;
             opacity = double.IsNaN(opacity) ? 0 : Math.Max(0, Math.Min(1, opacity));
             var color = new Color32(solid.Color.R, solid.Color.G, solid.Color.B,
                 (byte)Math.Round(solid.Color.A * opacity));
             for (int i = 0; i < 4; i++)
+            {
                 colors.Add(color);
+                outerRadii.Add(outerRadius);
+                innerRectangles.Add(innerRectangle);
+                innerRadii.Add(innerRadius);
+            }
             indices.Add(first);
             indices.Add(first + 1);
             indices.Add(first + 2);
@@ -213,6 +273,10 @@ namespace Xamlity.Unity
             mesh.SetVertices(vertices);
             mesh.SetColors(colors);
             mesh.SetUVs(0, uvs);
+            mesh.SetUVs(1, shapeCoordinates);
+            mesh.SetUVs(2, outerRadii);
+            mesh.SetUVs(3, innerRectangles);
+            mesh.SetUVs(4, innerRadii);
             mesh.subMeshCount = batches.Count;
             for (int i = 0; i < batches.Count; i++)
                 mesh.SetTriangles(indices, batches[i].Start, batches[i].Count, i);

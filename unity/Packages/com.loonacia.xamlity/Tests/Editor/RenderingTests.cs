@@ -13,6 +13,7 @@ using Xamlity.Rendering;
 using Xamlity.Unity;
 using Color = UnityEngine.Color;
 using CoreColor = Xamlity.Rendering.Color;
+using CornerRadius = Xamlity.Layout.CornerRadius;
 using Is = UnityEngine.TestTools.Constraints.Is;
 using Rect = Xamlity.Layout.Rect;
 using Point = Xamlity.Layout.Point;
@@ -258,6 +259,177 @@ namespace Xamlity.Editor.Tests
             }));
             Assert.That(mesh.colors32, Is.All.EqualTo(new Color32(10, 20, 30, 128)));
             Assert.That(mesh.triangles, Is.EqualTo(new[] { 0, 1, 2, 0, 2, 3 }));
+        }
+
+        [TestCase(false, false, 1.0)]
+        [TestCase(true, false, 1.0)]
+        [TestCase(false, true, 1.0)]
+        [TestCase(true, true, 1.0)]
+        [TestCase(false, false, 2.0)]
+        [TestCase(true, false, 2.0)]
+        [TestCase(false, true, 2.0)]
+        [TestCase(true, true, 2.0)]
+        public void RoundedQuadCarriesPixelShapeDataThroughClippingAndOpacity(bool border, bool clip, double scale)
+        {
+            mesh = new Mesh();
+            var context = new MeshDrawingContext();
+            var brush = new SolidColorBrush(CoreColor.FromArgb(128, 10, 20, 30));
+            context.Begin(128, scale);
+            context.PushOpacity(0.5);
+            if (clip)
+                context.PushClip(new Rect(12, 14, 24, 40));
+            var outer = new Rect(10, 12, 40, 60);
+            var radius = new CornerRadius(4, 8, 12, 16);
+            if (border)
+                context.DrawRoundedBorder(brush, outer, radius,
+                    new Rect(12, 16, 30, 48), new CornerRadius(1, 2, 3, 4));
+            else
+                context.DrawRoundedRectangle(brush, outer, radius);
+            if (clip)
+                context.Pop();
+            context.Pop();
+            context.Upload(mesh);
+
+            var positions = clip
+                ? new[] { new Vector2(12, 14), new Vector2(36, 14), new Vector2(36, 54), new Vector2(12, 54) }
+                : new[] { new Vector2(10, 12), new Vector2(50, 12), new Vector2(50, 72), new Vector2(10, 72) };
+            var vertices = mesh.vertices;
+            var coordinates = ReadShapeChannel(1);
+            Assert.That(mesh.vertexCount, Is.EqualTo(4));
+            Assert.That(coordinates.Count, Is.EqualTo(4));
+            for (int i = 0; i < 4; i++)
+            {
+                Assert.That(vertices[i], Is.EqualTo(new Vector3(
+                    positions[i].x * (float)scale, 128 - positions[i].y * (float)scale, 0)));
+                Assert.That(coordinates[i], Is.EqualTo(new Vector4(
+                    positions[i].x - 30, positions[i].y - 42, 20, 30) * (float)scale));
+            }
+            Assert.That(ReadShapeChannel(2), Is.All.EqualTo(new Vector4(4, 8, 12, 16) * (float)scale));
+            Assert.That(ReadShapeChannel(3), Is.All.EqualTo(border
+                ? new Vector4(-3, -2, 15, 24) * (float)scale : Vector4.zero));
+            Assert.That(ReadShapeChannel(4), Is.All.EqualTo(border
+                ? new Vector4(1, 2, 3, 4) * (float)scale : Vector4.zero));
+            Assert.That(mesh.colors32, Is.All.EqualTo(new Color32(10, 20, 30, 64)));
+            Assert.That(mesh.uv, Is.All.EqualTo(Vector2.zero));
+            Assert.That(mesh.triangles, Is.EqualTo(new[] { 0, 1, 2, 0, 2, 3 }));
+            Assert.That(context.Batches.Count, Is.EqualTo(1));
+            Assert.That(context.Batches[0].Texture, Is.Null);
+        }
+
+        [TestCase(0, 20)]
+        [TestCase(20, 0)]
+        public void RoundedBorderWithEmptyInteriorHasNoHole(double width, double height)
+        {
+            mesh = new Mesh();
+            var context = new MeshDrawingContext();
+            context.Begin(128, 1);
+            context.DrawRoundedBorder(new SolidColorBrush(CoreColor.FromRgb(255, 255, 255)),
+                new Rect(0, 0, 64, 64), new CornerRadius(16),
+                new Rect(10, 10, width, height), new CornerRadius(8));
+            context.Upload(mesh);
+
+            Assert.That(mesh.vertexCount, Is.EqualTo(4));
+            Assert.That(ReadShapeChannel(3), Is.All.EqualTo(Vector4.zero));
+            Assert.That(ReadShapeChannel(4), Is.All.EqualTo(Vector4.zero));
+        }
+
+        [Test]
+        public void RoundedCommandsShareSolidBatchAndPlainQuadsHaveNoShape()
+        {
+            CreateFont();
+            var run = MeasureKorean();
+            mesh = new Mesh();
+            var context = new MeshDrawingContext();
+            var brush = new SolidColorBrush(CoreColor.FromRgb(255, 0, 0));
+            var rect = new Rect(0, 0, 64, 64);
+            context.Begin(128, 1);
+            context.DrawRectangle(brush, rect);
+            context.DrawRoundedRectangle(brush, rect, new CornerRadius(16));
+            context.DrawRoundedBorder(brush, rect, new CornerRadius(16),
+                new Rect(4, 4, 56, 56), new CornerRadius(12));
+            context.DrawRectangle(brush, rect);
+            context.DrawGlyphRun(brush, run, new Point(0, 60));
+            context.Upload(mesh);
+
+            Assert.That(mesh.vertexCount, Is.EqualTo(24));
+            Assert.That(mesh.subMeshCount, Is.EqualTo(2));
+            Assert.That(context.Batches[0].Texture, Is.Null);
+            Assert.That(mesh.GetIndices(0), Is.EqualTo(new[]
+            {
+                0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7,
+                8, 9, 10, 8, 10, 11, 12, 13, 14, 12, 14, 15
+            }));
+            Assert.That(context.Batches[1].Texture, Is.SameAs(fontAsset.atlasTextures[0]));
+            for (int channel = 1; channel <= 4; channel++)
+            {
+                var data = ReadShapeChannel(channel);
+                Assert.That(data.Count, Is.EqualTo(mesh.vertexCount));
+                for (int i = 0; i < data.Count; i++)
+                    if (i < 4 || i >= 12)
+                        Assert.That(data[i], Is.EqualTo(Vector4.zero));
+            }
+
+            context.Begin(128, 1);
+            context.DrawRectangle(brush, rect);
+            context.Upload(mesh);
+            for (int channel = 1; channel <= 4; channel++)
+            {
+                Assert.That(ReadShapeChannel(channel).Count, Is.EqualTo(4));
+                Assert.That(ReadShapeChannel(channel), Is.All.EqualTo(Vector4.zero));
+            }
+        }
+
+        [Test]
+        public void FullyClippedAndEmptyRoundedCommandsProduceNoVerticesOrBatches()
+        {
+            mesh = new Mesh();
+            var context = new MeshDrawingContext();
+            var brush = new SolidColorBrush(CoreColor.FromRgb(255, 0, 0));
+            var rect = new Rect(0, 0, 64, 64);
+            context.Begin(128, 1);
+            context.PushClip(new Rect(64, 0, 10, 10));
+            context.DrawRoundedRectangle(brush, rect, new CornerRadius(16));
+            context.DrawRoundedBorder(brush, rect, new CornerRadius(16), default, default);
+            context.Pop();
+            context.DrawRoundedRectangle(brush, new Rect(0, 0, 0, 64), new CornerRadius(16));
+            context.DrawRoundedBorder(brush, new Rect(0, 0, 64, 0), new CornerRadius(16), default, default);
+            context.Upload(mesh);
+
+            Assert.That(mesh.vertexCount, Is.Zero);
+            Assert.That(context.Batches, Is.Empty);
+            for (int channel = 1; channel <= 4; channel++)
+                Assert.That(ReadShapeChannel(channel), Is.Empty);
+        }
+
+        [Test]
+        public void RoundedMeshRebuildReusesShapeListsWithoutAllocating()
+        {
+            mesh = new Mesh();
+            var context = new MeshDrawingContext();
+            var brush = new SolidColorBrush(CoreColor.FromRgb(255, 0, 0));
+            TestDelegate rebuild = () =>
+            {
+                context.Begin(128, 2);
+                context.PushClip(new Rect(8, 8, 48, 48));
+                context.PushOpacity(0.5);
+                context.DrawRoundedBorder(brush, new Rect(0, 0, 64, 64), new CornerRadius(16),
+                    new Rect(4, 4, 56, 56), new CornerRadius(12));
+                context.DrawRoundedRectangle(brush, new Rect(4, 4, 56, 56), new CornerRadius(12));
+                context.Pop();
+                context.Pop();
+                context.Upload(mesh);
+            };
+            rebuild();
+            rebuild();
+
+            Assert.That(rebuild, Is.Not.AllocatingGCMemory());
+        }
+
+        private List<Vector4> ReadShapeChannel(int channel)
+        {
+            var data = new List<Vector4>();
+            mesh.GetUVs(channel, data);
+            return data;
         }
 
         [Test]
@@ -673,6 +845,111 @@ namespace Xamlity.Editor.Tests
             for (int y = 0; y < 128; y++)
                 for (int x = 0; x < 256; x++)
                     AssertPixel(x, y, y >= 64 ? Color.red : Color.black);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void GameCameraDrawsRoundedBackgroundAndBorder(bool hasBorder)
+        {
+            var root = CreateRoot();
+            var border = (Border)root.Tree.RootElement;
+            border.Width = 64;
+            border.HorizontalAlignment = Xamlity.Layout.HorizontalAlignment.Left;
+            border.CornerRadius = new CornerRadius(16);
+            if (hasBorder)
+            {
+                border.BorderThickness = new Xamlity.Layout.Thickness(4);
+                border.BorderBrush = new SolidColorBrush(CoreColor.FromRgb(255, 255, 255));
+            }
+            root.Refresh(256, 128);
+            Assert.That(root.Scale, Is.EqualTo(1));
+            Assert.That(root.Mesh.vertexCount, Is.EqualTo(hasBorder ? 8 : 4));
+            Assert.That(root.Mesh.subMeshCount, Is.EqualTo(1));
+            Render(CreateCamera());
+
+            AssertPixel(32, 127 - 32, Color.red);
+            AssertPixel(1, 127 - 1, Color.black);
+            AssertPixel(32, 127, hasBorder ? Color.white : Color.red);
+            AssertPixel(32, 127 - 2, hasBorder ? Color.white : Color.red);
+            AssertPixel(32, 127 - 10, Color.red);
+            AssertPixel(64, 127 - 32, Color.black);
+            if (!hasBorder)
+            {
+                // Pixel centers are half a pixel from integer UI coordinates.
+                float coverage = 0.5f - (Mathf.Sqrt(2 * 11.5f * 11.5f) - 16);
+                var expected = new Color(coverage, 0, 0);
+                AssertPixel(4, 127 - 4, QualitySettings.activeColorSpace == ColorSpace.Linear
+                    ? expected.gamma : expected);
+            }
+        }
+
+        [TestCase(0)]
+        [TestCase(1)]
+        [TestCase(2)]
+        [TestCase(3)]
+        public void GameCameraDrawsUnequalCornerRadiusBeyondHalfSize(int corner)
+        {
+            var root = CreateRoot();
+            var border = (Border)root.Tree.RootElement;
+            border.Width = 64;
+            border.HorizontalAlignment = Xamlity.Layout.HorizontalAlignment.Left;
+            border.CornerRadius = new CornerRadius(corner == 0 ? 48 : 0, corner == 1 ? 48 : 0,
+                corner == 2 ? 48 : 0, corner == 3 ? 48 : 0);
+            root.Refresh(256, 128);
+            Render(CreateCamera());
+
+            // Mirror the top-left samples to each corner, including across the center line.
+            bool right = corner == 1 || corner == 2;
+            bool bottom = corner >= 2;
+            AssertPixel(right ? 29 : 34, 127 - (bottom ? 63 : 0), Color.black);
+            AssertPixel(right ? 14 : 49, 127 - (bottom ? 63 : 0), Color.red);
+            AssertPixel(right ? 62 : 1, 127 - (bottom ? 62 : 1), Color.black);
+            AssertPixel(right ? 1 : 62, 127 - (bottom ? 1 : 62), Color.red);
+        }
+
+        [Test]
+        public void GameCameraClipsRoundedChildWithoutMovingItsShapeAndBlendsOpacity()
+        {
+            var root = CreateRoot();
+            var parent = (Border)root.Tree.RootElement;
+            parent.Width = 40;
+            parent.HorizontalAlignment = Xamlity.Layout.HorizontalAlignment.Left;
+            parent.ClipToBounds = true;
+            parent.Background = null;
+            parent.Child = new Border
+            {
+                Width = 64, Height = 64,
+                HorizontalAlignment = Xamlity.Layout.HorizontalAlignment.Left,
+                Background = new SolidColorBrush(CoreColor.FromRgb(255, 0, 0)),
+                CornerRadius = new CornerRadius(16), Opacity = 0.5
+            };
+            root.Refresh(256, 128);
+            Render(CreateCamera());
+
+            var expected = new Color(128 / 255f, 0, 0);
+            if (QualitySettings.activeColorSpace == ColorSpace.Linear)
+                expected = expected.gamma;
+            AssertPixel(32, 127 - 32, expected);
+            AssertPixel(39, 127, expected);
+            AssertPixel(40, 127 - 32, Color.black);
+            AssertPixel(1, 127 - 1, Color.black);
+        }
+
+        [Test]
+        public void GameCameraDrawsRoundedBorderWithCollapsedInteriorAsSolid()
+        {
+            var root = CreateRoot();
+            var border = (Border)root.Tree.RootElement;
+            border.Width = 64;
+            border.HorizontalAlignment = Xamlity.Layout.HorizontalAlignment.Left;
+            border.CornerRadius = new CornerRadius(16);
+            border.BorderThickness = new Xamlity.Layout.Thickness(40);
+            border.BorderBrush = new SolidColorBrush(CoreColor.FromRgb(255, 255, 255));
+            root.Refresh(256, 128);
+            Render(CreateCamera());
+
+            AssertPixel(32, 127 - 32, Color.white);
+            AssertPixel(1, 127 - 1, Color.black);
         }
 
         [Test]
