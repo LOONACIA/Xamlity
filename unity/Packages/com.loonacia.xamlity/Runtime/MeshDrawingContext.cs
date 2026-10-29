@@ -4,6 +4,7 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.Rendering;
 using Xamlity.Rendering;
+using CornerRadius = Xamlity.Layout.CornerRadius;
 using Point = Xamlity.Layout.Point;
 using Rect = Xamlity.Layout.Rect;
 
@@ -101,6 +102,15 @@ namespace Xamlity.Unity
                 return;
 
             AddQuad(solid, rect, null, Vector2.zero, Vector2.zero);
+        }
+
+        public void DrawRoundedRectangle(Brush brush, Rect rectangle, CornerRadius cornerRadius)
+        {
+        }
+
+        public void DrawRoundedBorder(Brush brush, Rect outerRectangle, CornerRadius outerCornerRadius,
+            Rect innerRectangle, CornerRadius innerCornerRadius)
+        {
         }
 
         private void AddQuad(SolidColorBrush solid, Rect rect, Texture texture, Vector2 uvMin, Vector2 uvMax)

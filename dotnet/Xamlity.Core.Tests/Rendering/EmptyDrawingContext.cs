@@ -21,6 +21,15 @@ namespace Xamlity.Core.Tests.Rendering
         {
         }
 
+        public void DrawRoundedRectangle(Brush brush, Rect rectangle, CornerRadius cornerRadius)
+        {
+        }
+
+        public void DrawRoundedBorder(Brush brush, Rect outerRectangle, CornerRadius outerCornerRadius,
+            Rect innerRectangle, CornerRadius innerCornerRadius)
+        {
+        }
+
         public void DrawGlyphRun(Brush foreground, GlyphRun glyphRun, Point baselineOrigin)
         {
         }

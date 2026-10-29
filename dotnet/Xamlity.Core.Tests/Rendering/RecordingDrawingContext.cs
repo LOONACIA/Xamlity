@@ -9,6 +9,10 @@ namespace Xamlity.Core.Tests.Rendering
         public List<(string Method, double Opacity, Brush Brush, Rect Rect, GlyphRun Run, Point BaselineOrigin)>
             Calls { get; } = new List<(string, double, Brush, Rect, GlyphRun, Point)>(16);
         public List<(Brush Brush, Rect Rect)> Rectangles { get; } = new List<(Brush, Rect)>();
+        public List<(Brush Brush, Rect Rect, CornerRadius Radius)> RoundedRectangles { get; } =
+            new List<(Brush, Rect, CornerRadius)>();
+        public List<(Brush Brush, Rect OuterRect, CornerRadius OuterRadius, Rect InnerRect, CornerRadius InnerRadius)>
+            RoundedBorders { get; } = new List<(Brush, Rect, CornerRadius, Rect, CornerRadius)>();
         public List<(Brush Foreground, GlyphRun Run, Point BaselineOrigin)> GlyphRuns { get; } =
             new List<(Brush, GlyphRun, Point)>();
 
@@ -22,6 +26,19 @@ namespace Xamlity.Core.Tests.Rendering
         {
             Calls.Add((nameof(DrawRectangle), default, brush, rect, null, default));
             Rectangles.Add((brush, rect));
+        }
+
+        public void DrawRoundedRectangle(Brush brush, Rect rectangle, CornerRadius cornerRadius)
+        {
+            Calls.Add((nameof(DrawRoundedRectangle), default, brush, rectangle, null, default));
+            RoundedRectangles.Add((brush, rectangle, cornerRadius));
+        }
+
+        public void DrawRoundedBorder(Brush brush, Rect outerRectangle, CornerRadius outerCornerRadius,
+            Rect innerRectangle, CornerRadius innerCornerRadius)
+        {
+            Calls.Add((nameof(DrawRoundedBorder), default, brush, outerRectangle, null, default));
+            RoundedBorders.Add((brush, outerRectangle, outerCornerRadius, innerRectangle, innerCornerRadius));
         }
 
         public void DrawGlyphRun(Brush foreground, GlyphRun glyphRun, Point baselineOrigin)

@@ -24,6 +24,10 @@ namespace Xamlity.Controls
             nameof(Padding), typeof(Thickness), typeof(Border),
             new FrameworkPropertyMetadata(new Thickness(0),
                 FrameworkPropertyMetadataOptions.AffectsMeasure | FrameworkPropertyMetadataOptions.AffectsRender));
+        public static readonly DependencyProperty CornerRadiusProperty = DependencyProperty.Register(
+            nameof(CornerRadius), typeof(CornerRadius), typeof(Border),
+            new FrameworkPropertyMetadata(new CornerRadius(0),
+                FrameworkPropertyMetadataOptions.AffectsMeasure | FrameworkPropertyMetadataOptions.AffectsRender));
 
         private UIElement child;
 
@@ -49,6 +53,12 @@ namespace Xamlity.Controls
         {
             get => (Thickness)GetValue(PaddingProperty);
             set => SetValue(PaddingProperty, value);
+        }
+
+        public CornerRadius CornerRadius
+        {
+            get => (CornerRadius)GetValue(CornerRadiusProperty);
+            set => SetValue(CornerRadiusProperty, value);
         }
 
         public UIElement Child
@@ -106,6 +116,31 @@ namespace Xamlity.Controls
             double height = RenderSize.Height;
             double innerWidth = Math.Max(0, width - border.Left - border.Right);
             double innerHeight = Math.Max(0, height - border.Top - border.Bottom);
+            CornerRadius radius = CornerRadius;
+            if (radius != new CornerRadius(0))
+            {
+                var outer = new Rect(0, 0, width, height);
+                var inner = new Rect(border.Left, border.Top, innerWidth, innerHeight);
+                double topLeft = Math.Max(border.Left, border.Top) / 2;
+                double topRight = Math.Max(border.Right, border.Top) / 2;
+                double bottomRight = Math.Max(border.Right, border.Bottom) / 2;
+                double bottomLeft = Math.Max(border.Left, border.Bottom) / 2;
+                // Approximate WPF's elliptical corners with circular corners for unequal thicknesses.
+                var outerRadius = NormalizeRadius(new CornerRadius(
+                    radius.TopLeft == 0 ? 0 : radius.TopLeft + topLeft,
+                    radius.TopRight == 0 ? 0 : radius.TopRight + topRight,
+                    radius.BottomRight == 0 ? 0 : radius.BottomRight + bottomRight,
+                    radius.BottomLeft == 0 ? 0 : radius.BottomLeft + bottomLeft), width, height);
+                var innerRadius = NormalizeRadius(new CornerRadius(
+                    Math.Max(0, radius.TopLeft - topLeft), Math.Max(0, radius.TopRight - topRight),
+                    Math.Max(0, radius.BottomRight - bottomRight), Math.Max(0, radius.BottomLeft - bottomLeft)),
+                    innerWidth, innerHeight);
+                if (BorderBrush != null && (border.Left > 0 || border.Top > 0 || border.Right > 0 || border.Bottom > 0))
+                    drawingContext.DrawRoundedBorder(BorderBrush, outer, outerRadius, inner, innerRadius);
+                if (Background != null && innerWidth > 0 && innerHeight > 0)
+                    drawingContext.DrawRoundedRectangle(Background, inner, innerRadius);
+                return;
+            }
             Brush borderBrush = BorderBrush;
             if (borderBrush != null)
             {
@@ -118,6 +153,20 @@ namespace Xamlity.Controls
             if (background != null)
                 DrawRectangle(drawingContext, background, border.Left, border.Top, innerWidth, innerHeight);
         }
+
+        private static CornerRadius NormalizeRadius(CornerRadius radius, double width, double height)
+        {
+            double scale = 1;
+            scale = LimitRadiusScale(scale, width, radius.TopLeft + radius.TopRight);
+            scale = LimitRadiusScale(scale, width, radius.BottomLeft + radius.BottomRight);
+            scale = LimitRadiusScale(scale, height, radius.TopLeft + radius.BottomLeft);
+            scale = LimitRadiusScale(scale, height, radius.TopRight + radius.BottomRight);
+            return new CornerRadius(radius.TopLeft * scale, radius.TopRight * scale,
+                radius.BottomRight * scale, radius.BottomLeft * scale);
+        }
+
+        private static double LimitRadiusScale(double scale, double length, double sum) =>
+            sum > length ? Math.Min(scale, length / sum) : scale;
 
         private static void DrawRectangle(IDrawingContext drawingContext, Brush brush,
             double x, double y, double width, double height)

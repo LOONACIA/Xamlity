@@ -73,6 +73,11 @@ namespace Xamlity.Markup
                 if (TryThickness(text, out Thickness thickness))
                     value = thickness;
             }
+            else if (targetType == typeof(CornerRadius))
+            {
+                if (TryCornerRadius(text, out CornerRadius cornerRadius))
+                    value = cornerRadius;
+            }
             else if (targetType == typeof(Brush))
             {
                 if (TryColor(text.Trim(), out Color color))
@@ -120,6 +125,32 @@ namespace Xamlity.Markup
                 thickness = new Thickness(values[0], values[1], values[0], values[1]);
             else if (values.Count == 4)
                 thickness = new Thickness(values[0], values[1], values[2], values[3]);
+            else
+                return false;
+            return true;
+        }
+
+        private static bool TryCornerRadius(string text, out CornerRadius cornerRadius)
+        {
+            cornerRadius = default;
+            var values = new List<double>(4);
+            foreach (string group in text.Split(','))
+            {
+                string[] tokens = group.Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
+                if (tokens.Length == 0)
+                    return false;
+                foreach (string token in tokens)
+                {
+                    if (values.Count == 4 || !TryDouble(token, out double number) ||
+                        !(number >= 0) || double.IsInfinity(number))
+                        return false;
+                    values.Add(number);
+                }
+            }
+            if (values.Count == 1)
+                cornerRadius = new CornerRadius(values[0]);
+            else if (values.Count == 4)
+                cornerRadius = new CornerRadius(values[0], values[1], values[2], values[3]);
             else
                 return false;
             return true;

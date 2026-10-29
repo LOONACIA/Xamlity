@@ -68,6 +68,23 @@ namespace Xamlity.Tree
                     new Rect(rect.X + Offset.X, rect.Y + Offset.Y, rect.Width, rect.Height));
             }
 
+            public void DrawRoundedRectangle(Brush brush, Rect rectangle, CornerRadius cornerRadius)
+            {
+                Target.DrawRoundedRectangle(brush,
+                    new Rect(rectangle.X + Offset.X, rectangle.Y + Offset.Y, rectangle.Width, rectangle.Height),
+                    cornerRadius);
+            }
+
+            public void DrawRoundedBorder(Brush brush, Rect outerRectangle, CornerRadius outerCornerRadius,
+                Rect innerRectangle, CornerRadius innerCornerRadius)
+            {
+                Target.DrawRoundedBorder(brush,
+                    new Rect(outerRectangle.X + Offset.X, outerRectangle.Y + Offset.Y,
+                        outerRectangle.Width, outerRectangle.Height), outerCornerRadius,
+                    new Rect(innerRectangle.X + Offset.X, innerRectangle.Y + Offset.Y,
+                        innerRectangle.Width, innerRectangle.Height), innerCornerRadius);
+            }
+
             public void DrawGlyphRun(Brush foreground, GlyphRun glyphRun, Point baselineOrigin)
             {
                 Target.DrawGlyphRun(foreground, glyphRun,
