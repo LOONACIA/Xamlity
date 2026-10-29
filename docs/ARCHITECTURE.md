@@ -53,6 +53,7 @@ Core 내부는 다음 영역으로 나눈다. 폴더 이름은 네임스페이�
 - Core 코드는 netstandard2.1 API와 C# 9 문법만 쓴다. `dotnet/Xamlity.Core`가 같은 소스를 이 조건으로 컴파일해 위반을 잡는다.
 - `Xamlity.Unity`는 `UnityEngine.UI`(uGUI 컴포넌트)와 `UnityEngine.UIElements`(UI Toolkit)를 쓰지 않는다. `TMPro.TMP_FontAsset`은 글리프 데이터 소스로만 쓰고 `TMP_Text` 같은 컴포넌트는 쓰지 않는다.
 - 렌더링은 URP `ScriptableRendererFeature` 하나로만 화면에 나간다. Core의 그리기 명령을 메시로 바꾸는 일은 `Xamlity.Unity` 안에서만 한다.
+- 루트당 Mesh 하나를 재사용하며, 그리기 순서를 유지하고 연속한 같은 머티리얼·텍스처 명령을 submesh 배치로 묶는다. 단색은 `Xamlity/Solid`, 텍스트는 s12에서 추가할 SDF 셰이더를 사용한다.
 - 컨트롤은 lookless다. 컨트롤 클래스는 상태와 동작만 갖고, 모양은 `Themes/`의 ControlTemplate으로 정의한다. 직접 그리는 것은 프리미티브(Border, TextBlock, Image)뿐이다.
 - 에디터 전용 기능(임포트, 검증, 코드 생성, 재임포트 의존성, 설정 UI)은 `Xamlity.Editor`에만 둔다.
 
@@ -103,4 +104,3 @@ Input System → 추상 입력 이벤트 → 히트 테스트 → RoutedEvent �
 ## 미정 사항
 첫 관련 스텝에서 정하고 이 문서에 반영한다.
 - 기본 다크 테마의 구체적인 색과 치수.
-- 메시 배치 단위(텍스처·머티리얼별 배치 기준)와 셰이더 구성(SDF 텍스트, 둥근 사각형).
