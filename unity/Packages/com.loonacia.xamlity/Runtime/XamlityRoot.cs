@@ -1,7 +1,9 @@
 using System.Collections.Generic;
+using TMPro;
 using UnityEngine;
 using UnityEngine.Rendering;
 using Xamlity.Layout;
+using Xamlity.Rendering;
 using Xamlity.Tree;
 
 namespace Xamlity.Unity
@@ -18,6 +20,7 @@ namespace Xamlity.Unity
         internal static IReadOnlyList<XamlityRoot> ActiveRoots => activeRoots;
         internal UIRoot Tree { get; private set; }
         internal Mesh Mesh { get; private set; }
+        internal IReadOnlyList<MeshDrawingContext.Batch> Batches => drawingContext.Batches;
         internal int MeshRebuildCount { get; private set; }
 
         private void Awake() => Build(xaml);
@@ -31,11 +34,11 @@ namespace Xamlity.Unity
             CoreUtils.Destroy(Mesh);
         }
 
-        internal void Build(XamlAsset asset)
+        internal void Build(XamlAsset asset, TMP_FontAsset defaultFont = null)
         {
             if (asset == null)
                 return;
-            Tree = new UIRoot(asset.Build(), new TmpTextMeasurer(), default);
+            Tree = new UIRoot(asset.Build(), new TmpTextMeasurer(), new FontHandle(defaultFont));
             if (Mesh == null)
             {
                 Mesh = new Mesh { name = "Xamlity Root", hideFlags = HideFlags.HideAndDontSave };

@@ -9,14 +9,18 @@ namespace Xamlity.Unity
     public sealed class XamlityRendererFeature : ScriptableRendererFeature
     {
         [SerializeField] private Shader solidShader;
+        [SerializeField] private Shader textShader;
         private Material solidMaterial;
+        private Material textMaterial;
         private XamlityRenderPass pass;
 
         public override void Create()
         {
             CoreUtils.Destroy(solidMaterial);
+            CoreUtils.Destroy(textMaterial);
             solidMaterial = solidShader == null ? null : CoreUtils.CreateEngineMaterial(solidShader);
-            pass = new XamlityRenderPass(solidMaterial);
+            textMaterial = textShader == null ? null : CoreUtils.CreateEngineMaterial(textShader);
+            pass = new XamlityRenderPass(solidMaterial, textMaterial);
         }
 
         public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
@@ -28,26 +32,31 @@ namespace Xamlity.Unity
         protected override void Dispose(bool disposing)
         {
             CoreUtils.Destroy(solidMaterial);
+            CoreUtils.Destroy(textMaterial);
         }
 
         private sealed class XamlityRenderPass : ScriptableRenderPass
         {
             private static readonly int ProjectionId = Shader.PropertyToID("_XamlityProjection");
-            private readonly Material material;
+            private static readonly int AtlasId = Shader.PropertyToID("_MainTex");
+            private readonly Material solidMaterial;
+            private readonly Material textMaterial;
             private readonly MaterialPropertyBlock properties = new MaterialPropertyBlock();
 
             private sealed class PassData
             {
                 internal IReadOnlyList<XamlityRoot> Roots;
-                internal Material Material;
+                internal Material SolidMaterial;
+                internal Material TextMaterial;
                 internal MaterialPropertyBlock Properties;
                 internal Matrix4x4 Projection;
                 internal Rect Viewport;
             }
 
-            internal XamlityRenderPass(Material material)
+            internal XamlityRenderPass(Material solidMaterial, Material textMaterial)
             {
-                this.material = material;
+                this.solidMaterial = solidMaterial;
+                this.textMaterial = textMaterial;
                 renderPassEvent = RenderPassEvent.AfterRendering;
             }
 
@@ -61,7 +70,8 @@ namespace Xamlity.Unity
                 var resourceData = frameData.Get<UniversalResourceData>();
                 using var builder = renderGraph.AddRasterRenderPass<PassData>("Xamlity", out var data);
                 data.Roots = XamlityRoot.ActiveRoots;
-                data.Material = material;
+                data.SolidMaterial = solidMaterial;
+                data.TextMaterial = textMaterial;
                 data.Properties = properties;
                 data.Viewport = cameraData.camera.pixelRect;
                 var projection = Matrix4x4.Ortho(0, data.Viewport.width, 0, data.Viewport.height, -1, 1);
@@ -74,12 +84,21 @@ namespace Xamlity.Unity
                     passData.Properties.SetMatrix(ProjectionId, passData.Projection);
                     for (int i = 0; i < passData.Roots.Count; i++)
                     {
-                        Mesh mesh = passData.Roots[i].Mesh;
+                        var root = passData.Roots[i];
+                        Mesh mesh = root.Mesh;
                         if (mesh == null)
                             continue;
                         for (int submesh = 0; submesh < mesh.subMeshCount; submesh++)
-                            context.cmd.DrawMesh(mesh, Matrix4x4.identity, passData.Material,
+                        {
+                            var texture = root.Batches[submesh].Texture;
+                            var material = texture == null ? passData.SolidMaterial : passData.TextMaterial;
+                            if (material == null)
+                                continue;
+                            if (texture != null)
+                                passData.Properties.SetTexture(AtlasId, texture);
+                            context.cmd.DrawMesh(mesh, Matrix4x4.identity, material,
                                 submesh, 0, passData.Properties);
+                        }
                     }
                 });
             }

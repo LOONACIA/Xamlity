@@ -1,11 +1,13 @@
 using System.Collections.Generic;
 using System.Reflection;
 using NUnit.Framework;
+using TMPro;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
 using UnityEngine.TestTools.Constraints;
+using UnityEngine.TextCore.LowLevel;
 using Xamlity.Controls;
 using Xamlity.Rendering;
 using Xamlity.Unity;
@@ -13,17 +15,20 @@ using Color = UnityEngine.Color;
 using CoreColor = Xamlity.Rendering.Color;
 using Is = UnityEngine.TestTools.Constraints.Is;
 using Rect = Xamlity.Layout.Rect;
+using Point = Xamlity.Layout.Point;
 
 namespace Xamlity.Editor.Tests
 {
     public class RenderingTests
     {
         private const string TopBandPath = "Packages/com.loonacia.xamlity/Tests/Editor/TestAssets/TopBand.xaml";
+        private const string KoreanTextPath = "Packages/com.loonacia.xamlity/Tests/Editor/TestAssets/KoreanText.xaml";
         private readonly List<GameObject> objects = new List<GameObject>();
         private Mesh mesh;
         private RenderTexture target;
         private Texture2D pixels;
         private RenderTexture previousTarget;
+        private TMP_FontAsset fontAsset;
 
         [SetUp]
         public void SetUp()
@@ -52,6 +57,166 @@ namespace Xamlity.Editor.Tests
                 Object.DestroyImmediate(pixels);
             if (mesh != null)
                 Object.DestroyImmediate(mesh);
+            if (fontAsset != null)
+            {
+                var textures = fontAsset.atlasTextures;
+                var material = fontAsset.material;
+                Object.DestroyImmediate(fontAsset);
+                foreach (var texture in textures)
+                    if (texture != null)
+                        Object.DestroyImmediate(texture);
+                if (material != null)
+                    Object.DestroyImmediate(material);
+            }
+        }
+
+        [TestCase(1024)]
+        [TestCase(128)]
+        public void KoreanGlyphQuadsUseMetricsPaddingAdvancesAndCurrentAtlas(int atlasSize)
+        {
+            CreateFont(atlasSize);
+            var face = fontAsset.faceInfo;
+            face.scale = 1.25f;
+            fontAsset.faceInfo = face;
+            var run = MeasureKorean();
+            fontAsset.glyphLookupTable[run.GlyphIndices[1]].scale = 0.75f;
+            run = MeasureKorean();
+            var brush = new SolidColorBrush(CoreColor.FromArgb(128, 10, 20, 30));
+            var origin = new Point(11, 70);
+            mesh = new Mesh();
+            var context = new MeshDrawingContext();
+            context.Begin(128);
+            context.DrawGlyphRun(brush, run, origin);
+            context.Upload(mesh);
+
+            Assert.That(mesh.vertexCount, Is.EqualTo(8));
+            Assert.That(mesh.colors32, Is.All.EqualTo(new Color32(10, 20, 30, 128)));
+            Assert.That(mesh.subMeshCount, Is.EqualTo(atlasSize == 128 ? 2 : 1));
+            var vertices = mesh.vertices;
+            var uvs = mesh.uv;
+            double advance = 0;
+            for (int i = 0; i < 2; i++)
+            {
+                var glyph = fontAsset.glyphLookupTable[run.GlyphIndices[i]];
+                var atlas = fontAsset.atlasTextures[glyph.atlasIndex];
+                int batch = atlasSize == 128 ? i : 0;
+                Assert.That(context.Batches[batch].Texture, Is.SameAs(atlas));
+                Assert.That(atlas.width, Is.EqualTo(atlasSize));
+                double scale = 48.0 / face.pointSize * face.scale * glyph.scale;
+                double left = origin.X + advance + (glyph.metrics.horizontalBearingX - fontAsset.atlasPadding) * scale;
+                double top = 128 - origin.Y + (glyph.metrics.horizontalBearingY + fontAsset.atlasPadding) * scale;
+                Assert.That(vertices[i * 4].x, Is.EqualTo(left).Within(0.0001));
+                Assert.That(vertices[i * 4].y, Is.EqualTo(top).Within(0.0001));
+                Assert.That(vertices[i * 4 + 2].x,
+                    Is.EqualTo(left + (glyph.metrics.width + 2 * fontAsset.atlasPadding) * scale).Within(0.0001));
+                Assert.That(vertices[i * 4 + 2].y,
+                    Is.EqualTo(top - (glyph.metrics.height + 2 * fontAsset.atlasPadding) * scale).Within(0.0001));
+                Assert.That(uvs[i * 4].x,
+                    Is.EqualTo((glyph.glyphRect.x - fontAsset.atlasPadding) / (float)atlas.width));
+                Assert.That(uvs[i * 4].y,
+                    Is.EqualTo((glyph.glyphRect.y + glyph.glyphRect.height + fontAsset.atlasPadding) / (float)atlas.height));
+                advance += run.AdvanceWidths[i];
+            }
+            foreach (var uv in uvs)
+            {
+                Assert.That(uv.x, Is.InRange(0f, 1f));
+                Assert.That(uv.y, Is.InRange(0f, 1f));
+            }
+        }
+
+        [Test]
+        public void SolidAndTextBatchesKeepOrderAndMergeOnlyConsecutiveMatches()
+        {
+            CreateFont();
+            var run = MeasureKorean();
+            var brush = new SolidColorBrush(CoreColor.FromRgb(255, 255, 255));
+            mesh = new Mesh();
+            var context = new MeshDrawingContext();
+            context.Begin(128);
+            context.DrawRectangle(brush, new Rect(0, 0, 100, 100));
+            context.DrawGlyphRun(brush, run, new Point(0, 60));
+            context.DrawGlyphRun(brush, run, new Point(0, 120));
+            context.DrawRectangle(brush, new Rect(0, 0, 10, 10));
+            context.Upload(mesh);
+
+            Assert.That(mesh.subMeshCount, Is.EqualTo(3));
+            Assert.That(context.Batches[0].Texture, Is.Null);
+            Assert.That(context.Batches[1].Texture, Is.SameAs(fontAsset.atlasTextures[0]));
+            Assert.That(context.Batches[2].Texture, Is.Null);
+            Assert.That(mesh.GetIndices(0), Is.EqualTo(new[] { 0, 1, 2, 0, 2, 3 }));
+            Assert.That(mesh.GetIndices(1).Length, Is.EqualTo(24));
+            Assert.That(mesh.GetIndices(1)[0], Is.EqualTo(4));
+            Assert.That(mesh.GetIndices(2), Is.EqualTo(new[] { 20, 21, 22, 20, 22, 23 }));
+
+            context.Begin(128);
+            context.DrawGlyphRun(brush, run, new Point(0, 60));
+            context.Upload(mesh);
+            Assert.That(mesh.subMeshCount, Is.EqualTo(1));
+            Assert.That(context.Batches.Count, Is.EqualTo(1));
+            Assert.That(mesh.vertexCount, Is.EqualTo(8));
+        }
+
+        [TestCase(1024)]
+        [TestCase(128)]
+        public void GameCameraDrawsKoreanTextInsideRenderSize(int atlasSize)
+        {
+            CreateFont(atlasSize);
+            var root = CreateRoot(KoreanTextPath, fontAsset);
+            Assert.That(fontAsset.characterLookupTable.ContainsKey('한'), Is.False);
+            root.Refresh(256, 128);
+            var size = root.Tree.RootElement.RenderSize;
+            Assert.That(size.Width, Is.GreaterThan(0).And.LessThan(256));
+            Assert.That(size.Height, Is.GreaterThan(0).And.LessThan(128));
+            Assert.That(root.Mesh.subMeshCount, Is.EqualTo(atlasSize == 128 ? 2 : 1));
+            Render(CreateCamera());
+
+            var brightPixels = new int[2];
+            for (int y = 0; y < 128; y++)
+                for (int x = 0; x < 256; x++)
+                {
+                    bool inside = x < size.Width && 127 - y < size.Height;
+                    if (inside && pixels.GetPixel(x, y).r > 128 / 255f)
+                        brightPixels[x < size.Width / 2 ? 0 : 1]++;
+                    if (!inside)
+                        AssertPixel(x, y, Color.black);
+                }
+            Assert.That(brightPixels[0], Is.GreaterThan(100), "The first Korean glyph must be visible.");
+            Assert.That(brightPixels[1], Is.GreaterThan(100), "The second Korean glyph must be visible.");
+        }
+
+        [Test]
+        public void UnchangedTextRefreshReusesMeshWithoutAllocating()
+        {
+            CreateFont();
+            var root = CreateRoot(KoreanTextPath, fontAsset);
+            root.Refresh(256, 128);
+            var originalMesh = root.Mesh;
+            Assert.That(originalMesh.vertexCount, Is.EqualTo(8));
+
+            Assert.That(() => root.Refresh(256, 128), Is.Not.AllocatingGCMemory());
+
+            Assert.That(root.MeshRebuildCount, Is.EqualTo(1));
+            Assert.That(root.Mesh, Is.SameAs(originalMesh));
+            Assert.That(root.Tree.IsRenderDirty, Is.False);
+        }
+
+        private void CreateFont(int atlasSize = 1024)
+        {
+            var source = AssetDatabase.LoadAssetAtPath<Font>("Assets/Fonts/NotoSansKR-Regular.otf");
+            Assert.That(source, Is.Not.Null);
+            fontAsset = TMP_FontAsset.CreateFontAsset(source, 90, 9, GlyphRenderMode.SDFAA,
+                atlasSize, atlasSize, AtlasPopulationMode.Dynamic, true);
+            Assert.That(fontAsset, Is.Not.Null);
+        }
+
+        private GlyphRun MeasureKorean()
+        {
+            var font = new FontHandle(fontAsset);
+            var measurer = new TmpTextMeasurer();
+            Assert.That(measurer.TryGetGlyph(font, '한', 48, out var first), Is.True);
+            Assert.That(measurer.TryGetGlyph(font, '글', 48, out var second), Is.True);
+            return new GlyphRun(font, 48, new[] { first.GlyphIndex, second.GlyphIndex },
+                new[] { first.AdvanceWidth, second.AdvanceWidth });
         }
 
         [Test]
@@ -171,14 +336,14 @@ namespace Xamlity.Editor.Tests
             AssertPixel(128, 32, Color.black);
         }
 
-        private XamlityRoot CreateRoot()
+        private XamlityRoot CreateRoot(string path = TopBandPath, TMP_FontAsset defaultFont = null)
         {
             var gameObject = new GameObject("Xamlity test root");
             objects.Add(gameObject);
             var root = gameObject.AddComponent<XamlityRoot>();
-            var asset = AssetDatabase.LoadAssetAtPath<XamlAsset>(TopBandPath);
+            var asset = AssetDatabase.LoadAssetAtPath<XamlAsset>(path);
             Assert.That(asset, Is.Not.Null);
-            root.Build(asset);
+            root.Build(asset, defaultFont);
             root.Register();
             return root;
         }
@@ -210,6 +375,8 @@ namespace Xamlity.Editor.Tests
             var serialized = new SerializedObject(feature);
             Assert.That(serialized.FindProperty("solidShader").objectReferenceValue, Is.Not.Null,
                 "XamlityRendererFeature must reference the Xamlity/Solid shader.");
+            Assert.That(serialized.FindProperty("textShader").objectReferenceValue, Is.Not.Null,
+                "XamlityRendererFeature must reference the Xamlity/Text shader.");
             return camera;
         }
 
