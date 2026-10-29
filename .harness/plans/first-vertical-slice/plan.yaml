@@ -1,0 +1,580 @@
+id: first-vertical-slice
+goal: >
+  Xamlity의 첫 수직 슬라이스를 만든다. UPM 패키지(unity/Packages/com.loonacia.xamlity)와
+  dotnet 프로젝트 골격을 세우고, Core에 경량 DependencyProperty, Measure/Arrange 레이아웃(StackPanel),
+  Border·TextBlock 그리기 명령, XAML 파서 → IR → 요소 트리 빌더를 만든다. Unity 쪽에는 .xaml을 XamlAsset으로
+  바꾸는 ScriptedImporter, TMP_FontAsset 기반 글자 측정, URP RendererFeature로 back buffer에 직접 그리는
+  렌더러를 만든다. 샘플 씬에서 XAML로 선언한 Border와 한글 TextBlock이 화면에 보이면 완료다.
+  Grid/Canvas, 프로퍼티 요소·첨부 프로퍼티 문법, 스타일·템플릿, 바인딩, 입력, Image, CornerRadius, 클립·Opacity,
+  TextWrapping, 기준 해상도 배율, 코드비하인드, 핫리로드는 이 계획에 넣지 않는다(다음 계획).
+  공통 규칙: 코드 식별자, 주석, 예외·오류 메시지는 영어로 쓴다. Core 코드는 netstandard2.1 API와 C# 9 문법만 쓴다.
+  모든 스텝은 dotnet test와 unity test를 둘 다 통과해야 한다. unity test 실행 중 Unity가 새 파일의 .meta를 만들며,
+  이 .meta 파일은 커밋 대상이므로 지우지 않는다.
+approved: true
+max_attempts: 3
+ac_timeout_sec: 1200
+steps:
+  - id: s1-scaffold
+    title: scaffold UPM package, dotnet projects, and test runners
+    type: chore
+    scope: repo
+    description: |
+      먼저 읽을 파일: docs/ARCHITECTURE.md (디렉토리 구조, 레이어 규칙, 횡단 관심사 > 테스트), docs/ADR.md (ADR-002, ADR-013),
+      unity/Packages/manifest.json.
+
+      unity/ Unity 프로젝트(6000.5.4f1, URP 17.5.0)는 이미 있다. 이 스텝은 패키지와 dotnet 프로젝트 골격을 만들고,
+      두 테스트 러너에서 실제 테스트가 하나 이상 돌게 한다.
+
+      1. UPM 패키지 unity/Packages/com.loonacia.xamlity/ (embedded 패키지라 manifest dependencies에 넣지 않아도 인식된다):
+         - package.json: name `com.loonacia.xamlity`, displayName `Xamlity`, version `0.1.0`, unity `6000.5`,
+           dependencies `com.unity.render-pipelines.universal: 17.5.0`, `com.unity.ugui: 2.5.0` (manifest.json과 같은 버전).
+         - Core/Xamlity.Core.asmdef: name `Xamlity.Core`, rootNamespace `Xamlity`, `noEngineReferences: true`, references 없음.
+         - Core/AssemblyInfo.cs: `[assembly: InternalsVisibleTo("Xamlity.Core.Tests")]`, `[assembly: InternalsVisibleTo("Xamlity.Editor.Tests")]`.
+         - Runtime/Xamlity.Unity.asmdef: name `Xamlity.Unity`, rootNamespace `Xamlity.Unity`, references `Xamlity.Core`,
+           `Unity.RenderPipelines.Core.Runtime`, `Unity.RenderPipelines.Universal.Runtime`, `Unity.TextMeshPro`.
+         - Runtime/AssemblyInfo.cs: InternalsVisibleTo `Xamlity.Editor`, `Xamlity.Editor.Tests`.
+         - Editor/Xamlity.Editor.asmdef: name `Xamlity.Editor`, rootNamespace `Xamlity.Editor`, includePlatforms `["Editor"]`,
+           references `Xamlity.Core`, `Xamlity.Unity`. Editor/AssemblyInfo.cs: InternalsVisibleTo `Xamlity.Editor.Tests`.
+         - Tests/Editor/Xamlity.Editor.Tests.asmdef: includePlatforms `["Editor"]`, `defineConstraints: ["UNITY_INCLUDE_TESTS"]`,
+           `overrideReferences: true`, `precompiledReferences: ["nunit.framework.dll"]`, references `Xamlity.Core`, `Xamlity.Unity`,
+           `Xamlity.Editor`, `UnityEngine.TestRunner`, `UnityEditor.TestRunner`.
+      2. dotnet/Xamlity.Core/Xamlity.Core.csproj: `TargetFramework netstandard2.1`, `LangVersion 9`, `AssemblyName Xamlity.Core`,
+         `RootNamespace Xamlity`, `EnableDefaultCompileItems false`, `<Compile Include="../../unity/Packages/com.loonacia.xamlity/Core/**/*.cs" />`.
+         Nullable은 켜지 않는다. Core 소스를 dotnet/ 아래로 복사하지 마라. 이유: ADR-002, 소스는 패키지 한 곳에만 둔다.
+      3. dotnet/Xamlity.Core.Tests/Xamlity.Core.Tests.csproj: `net10.0`, Xamlity.Core ProjectReference,
+         패키지 `Microsoft.NET.Test.Sdk 17.12.0`, `NUnit 3.14.0`, `NUnit3TestAdapter 4.6.0` (정확히 이 버전. 로컬 NuGet 캐시에 이미 있어
+         네트워크 없이 restore된다). NUnit 4를 쓰지 마라. 이유: Unity Test Framework가 NUnit 3 계열이라 같은 `Assert.That` 습관을 유지한다.
+      4. 첫 Core 코드: Core/Layout/에 WPF와 같은 의미의 기하 구조체 `Size`, `Point`, `Rect`, `Thickness` (namespace `Xamlity.Layout`).
+         모두 `readonly struct`, `IEquatable<T>`, `==`/`!=`, InvariantCulture `ToString()`.
+         - `Size(double width, double height)`: 음수 width/height는 `ArgumentException` (WPF와 같음). 무한대는 허용.
+         - `Point(double x, double y)`.
+         - `Rect(double x, double y, double width, double height)`, `Rect(Point location, Size size)`; `X, Y, Width, Height, Left, Top,
+           Right, Bottom, Location, Size`. 음수 크기는 `ArgumentException`.
+         - `Thickness(double uniformLength)`, `Thickness(double left, double top, double right, double bottom)`; `Left, Top, Right, Bottom`.
+         `Size.Empty`, `Rect.Empty`, 연산 메서드(Union, Intersect 등)는 만들지 마라. 이유: 아직 쓰는 곳이 없다.
+         테스트: dotnet/Xamlity.Core.Tests/Layout/GeometryTests.cs.
+      5. Unity 테스트 Tests/Editor/CoreAssemblyTests.cs: `typeof(Xamlity.Layout.Thickness).Assembly`의 이름이 `Xamlity.Core`이고,
+         `GetReferencedAssemblies()`에 이름이 `UnityEngine`, `UnityEditor`, `Unity.`으로 시작하는 어셈블리가 없음을 검증한다.
+      6. docs/ADR.md의 ADR-013 "하네스에 미치는 영향"에서 `--output`을 `unity/Temp/` 아래로 지정하라는 문장을 `unity/Logs/` 아래로 고치고
+         이유를 붙인다: 에디터가 종료할 때 Temp/를 지워 결과 파일이 남지 않는다(실제로 확인됨).
+
+      검증: `unity test`가 끝난 뒤 unity/Logs/editmode-results.xml에서 total이 1 이상인지 확인하라. 테스트가 0개여도 명령은 0으로 끝난다.
+      패키지 테스트가 실행되지 않으면 unity/Packages/manifest.json에 `"testables": ["com.loonacia.xamlity"]`를 추가한다.
+      Unity가 unity/Packages/packages-lock.json에 embedded 패키지를 기록하는 것은 정상이다.
+      ADR-013에 따라 `unity test`가 Codex 환경에서 실행되지 않으면 우회하지 말고 blockers에 적는다.
+      끝난 뒤 Unity 에디터 프로세스가 남아 있지 않은지 확인한다.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/*
+      - unity/Packages/manifest.json
+      - unity/Packages/packages-lock.json
+      - dotnet/Xamlity.Core/*
+      - dotnet/Xamlity.Core.Tests/*
+      - docs/ADR.md
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s2-core-properties
+    title: add lightweight DependencyProperty system with inheritance
+    type: feat
+    scope: core
+    description: |
+      먼저 읽을 파일: docs/ADR.md (ADR-005), docs/ARCHITECTURE.md (Core 영역 표의 `Properties`), unity/Packages/com.loonacia.xamlity/Core/Layout/*.cs
+      (스텝 s1의 코드 스타일).
+
+      unity/Packages/com.loonacia.xamlity/Core/Properties/에 namespace `Xamlity.Properties`로 만든다:
+      - `public delegate void PropertyChangedCallback(DependencyObject d, DependencyPropertyChangedEventArgs e);`
+      - `public readonly struct DependencyPropertyChangedEventArgs` { `DependencyProperty Property`, `object OldValue`, `object NewValue` }.
+      - `public class PropertyMetadata` { ctor `(object defaultValue)`, `(object defaultValue, PropertyChangedCallback propertyChangedCallback)`;
+        `DefaultValue`, `PropertyChangedCallback` }.
+      - `[Flags] public enum FrameworkPropertyMetadataOptions { None = 0, AffectsMeasure = 1, AffectsArrange = 2, AffectsRender = 4, Inherits = 8 }`
+        (WPF 값과 이름이 다를 수 있지만 위 다섯 개만 둔다).
+      - `public class FrameworkPropertyMetadata : PropertyMetadata` { ctor `(object defaultValue, FrameworkPropertyMetadataOptions flags,
+        PropertyChangedCallback propertyChangedCallback = null)`; bool `AffectsMeasure`, `AffectsArrange`, `AffectsRender`, `Inherits` }.
+      - `public sealed class DependencyProperty` { `static DependencyProperty Register(string name, Type propertyType, Type ownerType,
+        PropertyMetadata typeMetadata = null)`; `Name`, `PropertyType`, `OwnerType`, `DefaultMetadata`; `public static readonly object UnsetValue`;
+        `internal static DependencyProperty FromName(Type ownerType, string name)` (ownerType에서 기반 타입 쪽으로 찾고, 없으면 null) }.
+        같은 (ownerType, name)을 두 번 등록하면 `ArgumentException`. metadata가 null이면 값 타입은 `default`, 참조 타입은 null을 기본값으로 쓴다.
+        기본값 타입이 PropertyType에 맞지 않으면 등록 시 `ArgumentException`.
+      - `public class DependencyObject` {
+          `object GetValue(DependencyProperty dp)`, `void SetValue(DependencyProperty dp, object value)`, `void ClearValue(DependencyProperty dp)`,
+          `object ReadLocalValue(DependencyProperty dp)` (로컬 값이 없으면 `DependencyProperty.UnsetValue`),
+          `protected virtual void OnPropertyChanged(DependencyPropertyChangedEventArgs e)`,
+          `protected internal virtual DependencyObject InheritanceParent => null;`,
+          `protected internal virtual int InheritanceChildrenCount => 0;`,
+          `protected internal virtual DependencyObject GetInheritanceChild(int index)` (기본 구현은 ArgumentOutOfRangeException),
+          `protected internal void OnInheritanceParentChanged(DependencyObject oldParent)` }.
+      굽히면 안 되는 규칙:
+      - 값 우선순위는 로컬 값 → 상속값 → 기본값 세 단계만 구현한다. 스타일·템플릿·트리거 단계는 만들지 마라. 이유: 다음 계획의 Styling에서
+        ADR-005 순서대로 끼워 넣는다.
+      - SetValue 값이 PropertyType에 할당 불가능하면(참조 타입은 null 허용, 값 타입은 null 불가) `ArgumentException`.
+      - 유효값이 실제로 바뀔 때만(`object.Equals`로 비교) 메타데이터의 PropertyChangedCallback과 OnPropertyChanged를 부른다. 순서는 WPF처럼
+        OnPropertyChanged가 먼저 불리고 그 안에서 callback이 불리는 구조여도, callback 먼저여도 되지만 테스트로 고정한다.
+      - Inherits 프로퍼티: 로컬 값이 없으면 InheritanceParent 체인을 따라 올라가 유효값을 찾고, 끝까지 없으면 기본값이다. 상속값은 캐시하지 않아도 된다.
+        단, 어떤 객체의 Inherits 프로퍼티 유효값이 바뀌면 그 프로퍼티에 로컬 값이 없는 자손 전체(InheritanceChildrenCount/GetInheritanceChild로 순회)에
+        변경 알림이 가야 한다. 소유 타입과 무관하게 모든 DependencyObject를 통해 상속된다(WPF처럼 Border를 거쳐 TextBlock으로 FontSize가 내려간다).
+      - OnInheritanceParentChanged(oldParent): 등록된 모든 Inherits 프로퍼티에 대해 oldParent 기준 값과 새 부모 기준 값을 비교해 바뀐 것만 알린다
+        (자손까지 전파).
+      - GetValue는 GC 할당이 없어야 한다(저장된 boxed 값을 그대로 반환).
+      - 메인 스레드 전용이다. lock을 넣지 마라.
+      만들지 마라: coercion, validation callback, Freezable, RegisterAttached, OverrideMetadata, AddOwner, 읽기 전용 프로퍼티. 이유: ADR-005가
+      coercion/validation/Freezable을 제외했고, 첨부 프로퍼티는 Grid와 함께 다음 계획에서 추가한다.
+
+      테스트 dotnet/Xamlity.Core.Tests/Properties/DependencyPropertyTests.cs: 테스트 전용 DependencyObject 서브클래스(부모·자식을 갖는 노드)로
+      기본값, 로컬 값, ClearValue, ReadLocalValue, 타입 불일치 예외, 중복 등록 예외, FromName의 기반 타입 탐색, 변경 알림의 old/new 값과
+      같은 값 재설정 시 알림 없음, 상속, 자식 로컬 값의 상속 차단, 조부모 값 변경이 손자에게 알림, 재부모화 시 OnInheritanceParentChanged 알림을 검증한다.
+      DependencyProperty 레지스트리는 정적이므로 테스트마다 다른 이름이나 다른 owner 타입을 써서 중복 등록 충돌을 피한다.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Properties*
+      - dotnet/Xamlity.Core.Tests/Properties/*
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s3-core-element-layout
+    title: add UIElement and FrameworkElement Measure/Arrange with invalidation
+    type: feat
+    scope: core
+    description: |
+      먼저 읽을 파일: docs/ADR.md (ADR-005, ADR-007), docs/ARCHITECTURE.md (Core 영역 표, 횡단 관심사 > 성능),
+      unity/Packages/com.loonacia.xamlity/Core/Properties/*.cs, Core/Layout/*.cs.
+
+      WPF FrameworkElement의 레이아웃 규칙을 그대로 구현한다. 모든 레이아웃 관련 값은 등록된 DependencyProperty로 만든다(ADR-005).
+      1. Core/Layout/HorizontalAlignment.cs, VerticalAlignment.cs (namespace `Xamlity.Layout`): WPF와 같은 멤버 `Left, Center, Right, Stretch` /
+         `Top, Center, Bottom, Stretch`.
+      2. Core/Tree/UIElement.cs (namespace `Xamlity.Tree`), `public abstract class UIElement : DependencyObject`:
+         - `Size DesiredSize`, `Size RenderSize`, `Point VisualOffset` (비주얼 부모 기준 위치), `bool IsMeasureValid`, `bool IsArrangeValid`.
+         - `void Measure(Size availableSize)`, `void Arrange(Rect finalRect)`, `protected virtual Size MeasureCore(Size availableSize)`,
+           `protected virtual void ArrangeCore(Rect finalRect)`, `void InvalidateMeasure()`, `void InvalidateArrange()`.
+         - `UIElement VisualParent`, `protected void AddVisualChild(UIElement child)`, `protected void RemoveVisualChild(UIElement child)`,
+           `protected virtual int VisualChildrenCount`, `protected virtual UIElement GetVisualChild(int index)`.
+           Add/RemoveVisualChild는 부모를 설정·해제하고 `OnInheritanceParentChanged`를 부른다. 이미 부모가 있는 요소를 추가하면 InvalidOperationException.
+         - InheritanceParent/InheritanceChildren은 비주얼 부모·자식으로 오버라이드한다(논리 트리는 템플릿과 함께 다음 계획에서 도입).
+         - OnPropertyChanged: 메타데이터가 FrameworkPropertyMetadata이고 AffectsMeasure면 InvalidateMeasure, AffectsArrange면 InvalidateArrange.
+         무효화 규칙(단순화한 WPF): InvalidateMeasure는 자신과 모든 조상을 measure/arrange 무효로 표시한다. InvalidateArrange는 자신과 조상을 arrange
+         무효로 표시한다. Measure는 measure가 유효하고 availableSize가 직전과 같으면 아무것도 하지 않는다. Arrange는 arrange가 유효하고 finalRect가
+         직전과 같으면 아무것도 하지 않는다. 그래서 형제 요소는 다시 측정되지 않는다.
+      3. Core/Tree/FrameworkElement.cs, `public class FrameworkElement : UIElement`:
+         DP `Width`, `Height` (기본 NaN), `MinWidth`, `MinHeight` (0), `MaxWidth`, `MaxHeight` (+∞), `Margin` (Thickness 0),
+         `HorizontalAlignment`, `VerticalAlignment` (Stretch) — 모두 AffectsMeasure(alignment는 AffectsArrange), `Name` (string, 빈 문자열, 레이아웃 영향 없음).
+         `protected virtual Size MeasureOverride(Size availableSize)` (기본: 자식 없이 0,0), `protected virtual Size ArrangeOverride(Size finalSize)` (기본: finalSize).
+         MeasureCore/ArrangeCore는 WPF FrameworkElement 규칙대로: Margin 제외, Width/Height/Min/Max로 제약, MeasureOverride 결과 클램프,
+         Arrange에서 Stretch가 아니면 desired 크기를 쓰고 alignment로 위치를 정하며 Margin만큼 안쪽으로 배치. 결과는 VisualOffset과 RenderSize로 남긴다.
+         레이아웃 반올림(UseLayoutRounding)과 클립은 하지 않는다. 이유: v1 범위 밖이며 클립은 다음 계획의 렌더링 스텝에서 다룬다.
+      4. Core/Tree/UIRoot.cs, `public sealed class UIRoot`: ctor `(UIElement rootElement)`, `RootElement`, `void UpdateLayout(Size viewportSize)`
+         (루트를 viewport로 Measure한 뒤 `Rect(0,0,viewport)`로 Arrange). 변화가 없으면 두 번째 호출은 MeasureOverride/ArrangeOverride를 부르지 않는다.
+      만들지 마라: Panel/StackPanel(다음 스텝 s4), 그리기와 OnRender(s5), NameScope/FindName, 논리 트리, 이벤트. 이유: 각각 이후 스텝·계획에서 추가한다.
+
+      테스트 dotnet/Xamlity.Core.Tests/Tree/LayoutTests.cs: 테스트 전용 FrameworkElement(고정된 콘텐츠 크기, MeasureOverride/ArrangeOverride 호출 횟수 기록)와
+      자식을 겹쳐 배치하는 테스트 전용 컨테이너로 WPF 기대 좌표를 검증한다. 예: 400x300 viewport에서 Width=100 Height=50 Center/Center → VisualOffset (150,125),
+      RenderSize 100x50. Margin=10 Stretch → (10,10) 380x280. Right/Bottom 정렬, MinWidth/MaxWidth 클램프, NaN Width가 콘텐츠 크기를 쓰는 경우.
+      무효화: 변화 없는 두 번째 UpdateLayout은 호출 횟수가 늘지 않고, 한 자식의 Width를 바꾸면 그 자식과 조상만 다시 측정되고 형제는 그대로다.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Tree*
+      - unity/Packages/com.loonacia.xamlity/Core/Layout/HorizontalAlignment.cs*
+      - unity/Packages/com.loonacia.xamlity/Core/Layout/VerticalAlignment.cs*
+      - dotnet/Xamlity.Core.Tests/Tree/*
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s4-core-stackpanel
+    title: add Panel, UIElementCollection, and StackPanel
+    type: feat
+    scope: core
+    description: |
+      먼저 읽을 파일: docs/ADR.md (ADR-004, ADR-007), unity/Packages/com.loonacia.xamlity/Core/Tree/*.cs (s3의 UIElement·FrameworkElement 무효화 규칙),
+      dotnet/Xamlity.Core.Tests/Tree/LayoutTests.cs (테스트 스타일).
+
+      namespace `Xamlity.Layout`에 WPF와 같은 의미로 만든다:
+      - Core/Layout/Orientation.cs: `Horizontal, Vertical`.
+      - Core/Layout/UIElementCollection.cs: `public sealed class UIElementCollection : IList<UIElement>` 수준의 API(`Add, Insert, Remove, RemoveAt, Clear,
+        Count, this[int], Contains, IndexOf`, 열거). 소유 패널의 AddVisualChild/RemoveVisualChild를 호출하고 소유 패널을 InvalidateMeasure한다.
+        null 추가는 ArgumentNullException. 인덱서로 교체하면 이전 요소를 제거하고 새 요소를 추가한다. foreach가 GC 할당을 하지 않도록 struct 열거자를
+        public `GetEnumerator()`로 제공한다(인터페이스 열거자는 별도 구현).
+      - Core/Layout/Panel.cs: `public abstract class Panel : FrameworkElement`, `UIElementCollection Children`, VisualChildrenCount/GetVisualChild를
+        Children으로 오버라이드. (WPF의 System.Windows.Controls.Panel과 같은 추상 기반 클래스다.)
+      - Core/Layout/StackPanel.cs: `public class StackPanel : Panel`, DP `Orientation` (기본 Vertical, AffectsMeasure).
+        WPF 규칙: 쌓는 방향은 무한대로, 교차 방향은 사용 가능한 크기로 자식을 Measure한다. desired는 쌓는 방향 합, 교차 방향 최댓값.
+        Arrange는 쌓는 방향으로 각 자식의 desired 크기만큼, 교차 방향은 finalSize 전체를 준다(자식 alignment가 그 안에서 적용됨).
+      Background, IsItemsHost, ZIndex 등 다른 Panel 기능은 만들지 마라. 이유: 그리기는 s5에서 Border에만 넣고 나머지는 v1 범위 밖이다.
+      Grid, Canvas를 만들지 마라. 이유: 다음 계획에서 첨부 프로퍼티와 함께 추가한다.
+
+      테스트 dotnet/Xamlity.Core.Tests/Layout/StackPanelTests.cs: 세로·가로 쌓기 좌표, 교차 방향 alignment(예: 세로 StackPanel 안 HorizontalAlignment=Center
+      자식의 x), 자식 Margin, Children.Add/Remove/Insert 후 재배치와 VisualParent 변경, 다른 패널에 이미 속한 요소 추가 시 예외, Orientation 변경 시 재측정,
+      struct 열거자로 foreach해도 할당이 없음(`GC.GetAllocatedBytesForCurrentThread()` 차이 0).
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Layout/Orientation.cs*
+      - unity/Packages/com.loonacia.xamlity/Core/Layout/UIElementCollection.cs*
+      - unity/Packages/com.loonacia.xamlity/Core/Layout/Panel.cs*
+      - unity/Packages/com.loonacia.xamlity/Core/Layout/StackPanel.cs*
+      - dotnet/Xamlity.Core.Tests/Layout/StackPanelTests.cs
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s5-core-border-render
+    title: render Border through IDrawingContext with render invalidation
+    type: feat
+    scope: core
+    description: |
+      먼저 읽을 파일: docs/ARCHITECTURE.md (Core 영역 표의 `Rendering`, `Controls`, 레이어 규칙, 횡단 관심사 > 성능), docs/ADR.md (ADR-006),
+      unity/Packages/com.loonacia.xamlity/Core/Tree/*.cs, Core/Layout/*.cs.
+
+      1. namespace `Xamlity.Rendering` (Core/Rendering/):
+         - `Color`: `readonly struct`, byte `A, R, G, B`, `static Color FromArgb(byte a, byte r, byte g, byte b)`, `FromRgb(byte r, byte g, byte b)`, IEquatable.
+         - `public abstract class Brush`, `public sealed class SolidColorBrush : Brush` (ctor `(Color color)`, 읽기 전용 `Color`). 생성 후 바뀌지 않는다.
+           `<SolidColorBrush Color=...>` 요소 문법을 위한 setter는 만들지 마라. 이유: 프로퍼티 요소 문법은 다음 계획에서 다룬다.
+         - `public interface IDrawingContext { void DrawRectangle(Brush brush, Rect rect); }` — 이 스텝에서는 이 메서드 하나만 둔다.
+           DrawGlyphRun은 s6에서 추가한다. 둥근 사각형, 이미지, PushClip/PushOpacity는 만들지 마라. 이유: 다음 계획의 렌더링 스텝 범위다.
+      2. UIElement: `protected virtual void OnRender(IDrawingContext drawingContext)` (요소 로컬 좌표, 원점은 RenderSize 왼쪽 위), `void InvalidateVisual()`.
+         AffectsRender 프로퍼티 변경과, Arrange 결과(VisualOffset/RenderSize)가 바뀌는 경우 소속 UIRoot를 render dirty로 만든다.
+         요소가 소속 UIRoot를 찾는 방법: UIRoot가 루트 요소에 자신을 기록하고, 요소는 VisualParent를 따라 맨 위까지 올라가 그 값을 읽는다.
+      3. UIRoot: `bool IsRenderDirty` (생성 직후 true), `void Render(IDrawingContext drawingContext)`: 비주얼 트리를 부모 → 자식(인덱스 순) 순서로 돌며
+         각 요소의 OnRender를 루트 절대 좌표로 변환해 전달하고, 끝나면 IsRenderDirty를 false로 만든다. 좌표 변환은 재사용하는 내부 래퍼
+         IDrawingContext 하나로 처리해 Render 호출당 GC 할당이 없게 한다.
+      4. Core/Controls/Border.cs (namespace `Xamlity.Controls`), `public class Border : FrameworkElement`:
+         DP `Background`, `BorderBrush` (Brush, null, AffectsRender), `BorderThickness`, `Padding` (Thickness, AffectsMeasure|AffectsRender).
+         `UIElement Child` CLR 프로퍼티(WPF Decorator.Child와 같음: 교체 시 Remove/AddVisualChild, InvalidateMeasure).
+         Measure: 자식에게 availableSize − BorderThickness − Padding을 주고 desired = 자식 desired + BorderThickness + Padding.
+         Arrange: 자식을 안쪽 사각형에 배치. OnRender(WPF처럼 테두리 먼저, 배경 나중): BorderBrush가 있고 두께가 0보다 크면 네 변을
+         위 (0,0,W,t), 아래 (0,H−b,W,b), 왼쪽 (0,t,l,H−t−b), 오른쪽 (W−r,t,r,H−t−b) 순서로 그리고(폭이나 높이가 0인 사각형은 생략),
+         Background가 있으면 안쪽 사각형 (l,t,W−l−r,H−t−b)을 그린다. CornerRadius는 만들지 마라. 이유: 둥근 사각형 그리기는 다음 계획이다.
+
+      테스트(dotnet/Xamlity.Core.Tests/Rendering/): 기록용 `RecordingDrawingContext`(테스트 프로젝트에만 둔다. 이유: ARCHITECTURE의 테스트 전략)로
+      중첩 Border의 절대 좌표, 테두리 네 변 분해와 순서, null 브러시면 명령 없음, Padding·BorderThickness가 자식 위치에 반영됨을 검증한다.
+      render dirty: Render 후 false, Background 변경 시 true, Width 변경으로 위치가 바뀌면 UpdateLayout 후 true, 아무 변화 없는 UpdateLayout 후에는 false 유지.
+      할당 없는 Render: 기록하지 않는 빈 IDrawingContext로 두 번째 `UpdateLayout(같은 크기)` + `Render` 호출의 `GC.GetAllocatedBytesForCurrentThread()` 차이가 0.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Rendering*
+      - unity/Packages/com.loonacia.xamlity/Core/Controls*
+      - unity/Packages/com.loonacia.xamlity/Core/Tree/UIElement.cs
+      - unity/Packages/com.loonacia.xamlity/Core/Tree/UIRoot.cs
+      - dotnet/Xamlity.Core.Tests/Rendering/*
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s6-core-textblock
+    title: measure and render single-line TextBlock via ITextMeasurer
+    type: feat
+    scope: core
+    description: |
+      먼저 읽을 파일: docs/ADR.md (ADR-002, ADR-010: 텍스트 레이아웃은 Core가 한다), docs/ARCHITECTURE.md (`Rendering` 영역),
+      unity/Packages/com.loonacia.xamlity/Core/Rendering/*.cs, Core/Controls/Border.cs, Core/Tree/UIRoot.cs, dotnet/Xamlity.Core.Tests/Rendering/*.
+
+      1. Core/Rendering/ (namespace `Xamlity.Rendering`):
+         - `public readonly struct FontHandle : IEquatable<FontHandle>` { ctor `(object source)`, `object Source`, `bool IsValid` (Source != null) }.
+           엔진 폰트 객체를 감싸는 불투명 핸들이다(Unity 어댑터가 TMP_FontAsset을 넣는다).
+         - `public readonly struct FontMetrics` { `double Ascent, Descent, LineHeight` } (픽셀, 주어진 fontSize 기준).
+         - `public readonly struct GlyphMetrics` { `uint GlyphIndex`, `double AdvanceWidth` }.
+         - `public interface ITextMeasurer { FontMetrics GetFontMetrics(FontHandle font, double fontSize);
+           bool TryGetGlyph(FontHandle font, int codePoint, double fontSize, out GlyphMetrics glyph); }`
+         - `public sealed class GlyphRun` { ctor `(FontHandle font, double fontSize, uint[] glyphIndices, double[] advanceWidths)`; 같은 이름의 읽기 전용 프로퍼티 }.
+           글자 위치는 기준선 원점에서 advance를 누적해 정한다.
+         - IDrawingContext에 `void DrawGlyphRun(Brush foreground, GlyphRun glyphRun, Point baselineOrigin)` 추가. baselineOrigin은 OnRender에서는 로컬,
+           UIRoot의 좌표 변환 래퍼를 거치면 루트 절대 좌표다(GlyphRun 자체는 위치를 갖지 않으므로 변환에 할당이 없다).
+      2. UIRoot: ctor `(UIElement rootElement, ITextMeasurer textMeasurer, FontHandle defaultFont)` 추가(기존 1인자 ctor는 measurer 없이 유지),
+         `ITextMeasurer TextMeasurer`, `FontHandle DefaultFont`.
+      3. Core/Controls/TextBlock.cs, `public class TextBlock : FrameworkElement`: DP `Text` (string, "", AffectsMeasure|AffectsRender),
+         `FontSize` (double, 12, AffectsMeasure|AffectsRender|Inherits), `Foreground` (Brush, 검정 SolidColorBrush, AffectsRender|Inherits).
+         MeasureOverride: 소속 UIRoot의 TextMeasurer와 DefaultFont로 한 줄 레이아웃을 한다. 코드 포인트 단위로 순회(서로게이트 쌍 처리)하고,
+         TryGetGlyph가 false인 글자는 건너뛴다(advance 0, 그리지 않음, 예외 없음). desired = (advance 합, LineHeight).
+         measurer가 없거나 폰트가 유효하지 않으면 (0,0)이고 그리지 않는다. 줄바꿈 문자도 일반 글자처럼 measurer에 넘긴다.
+         GlyphRun은 Text·FontSize·폰트가 바뀔 때만 새로 만들고 캐시한다(변화 없는 프레임에 할당 0).
+         OnRender: Foreground가 있으면 `DrawGlyphRun(Foreground, run, new Point(0, Ascent))`.
+      만들지 마라: TextWrapping, TextAlignment, TextTrimming, FontFamily, Inlines, 커닝, 폰트 폴백. 이유: TextWrapping/TextAlignment/FontFamily는
+      다음 계획, 나머지는 PRD 범위 밖이다.
+
+      테스트 dotnet/Xamlity.Core.Tests/Rendering/TextBlockTests.cs: 가짜 `FakeTextMeasurer`(테스트 프로젝트에만 둔다. 예: advance = fontSize×0.5,
+      Ascent = 0.8×fontSize, Descent = 0.2×fontSize, LineHeight = 1.2×fontSize, 특정 코드 포인트는 글리프 없음)로 desired 크기, GlyphRun의 인덱스·advance,
+      기준선 원점의 절대 좌표(Border 안 TextBlock), 글리프 없는 글자 건너뛰기, 서로게이트 쌍이 한 코드 포인트로 처리됨을 검증한다.
+      상속: `border.SetValue(TextBlock.FontSizeProperty, 24.0)`이면 자식 TextBlock이 24로 측정되고, 값을 바꾸면 다시 측정된다.
+      Text를 같은 값으로 다시 설정하면 재측정이 없다. 변화 없는 두 번째 UpdateLayout + Render(빈 IDrawingContext)는 할당 0.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Rendering*
+      - unity/Packages/com.loonacia.xamlity/Core/Controls/TextBlock.cs*
+      - unity/Packages/com.loonacia.xamlity/Core/Tree/UIRoot.cs
+      - unity/Packages/com.loonacia.xamlity/Core/Tree/UIElement.cs
+      - dotnet/Xamlity.Core.Tests/Rendering/*
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s7-core-xaml-parser
+    title: parse XAML into IR with file(line,col) errors
+    type: feat
+    scope: markup
+    description: |
+      먼저 읽을 파일: docs/PRD.md (핵심 기능 1, 2), docs/ADR.md (ADR-003, ADR-004), docs/ARCHITECTURE.md (`Markup` 영역, 데이터 흐름 > 에디터: 임포트,
+      횡단 관심사 > 에러 처리), unity/Packages/com.loonacia.xamlity/Core/ 전체(어떤 타입과 DP가 있는지).
+
+      namespace `Xamlity.Markup` (Core/Markup/)에 XAML 텍스트 → IR 파서를 만든다. 런타임 빌더와 직렬화는 다음 스텝(s8)이다.
+      1. `ContentPropertyAttribute(string name)` (AttributeUsage Class, Inherited true). Border에 `[ContentProperty("Child")]`, Panel에
+         `[ContentProperty("Children")]`을 붙인다. TextBlock에는 붙이지 않는다(WPF의 content property는 Inlines이고 Inlines는 범위 밖).
+      2. IR (Core/Markup/XamlDocument.cs 등): `XamlDocument { XamlObjectNode Root }`;
+         `XamlObjectNode { string TypeName; string Name (x:Name, 없으면 null); int Line; int Column; List<XamlPropertyNode> Properties }`.
+         TypeName은 `"<CLR 전체 이름>, <어셈블리 이름>"` 형식이다(예: `Xamlity.Controls.Border, Xamlity.Core`). 이유: 런타임에서 `Type.GetType`으로
+         바로 찾을 수 있고, 다음 계획의 사용자 타입(clr-namespace)도 같은 형식을 쓴다.
+         `XamlPropertyNode { string PropertyName; int Line; int Column; string TextValue; List<XamlObjectNode> Objects }` — 속성 값이면 TextValue,
+         content 자식이면 Objects. 값은 변환하지 않은 원문 문자열로 저장한다(검증만 파서에서 한다). 이유: IR 형식을 단순하게 유지하고 변환기는
+         빌더가 다시 쓴다.
+      3. `public sealed class XamlError { string File; int Line; int Column; string Message; override string ToString() => $"{File}({Line},{Column}): {Message}"; }`
+         Line/Column은 1부터 시작한다.
+      4. `public static class XamlParser { public static XamlParseResult Parse(string text, string fileName); }`,
+         `XamlParseResult { XamlDocument Document (오류가 하나라도 있으면 null); IReadOnlyList<XamlError> Errors }`.
+         System.Xml의 XmlReader(DtdProcessing.Prohibit)와 IXmlLineInfo로 줄·열을 얻는다. XML 문법 오류(XmlException)는 그 위치로 하나만 보고하고 멈춘다.
+         타입·프로퍼티·값 오류는 계속 진행하며 모두 모은다.
+      5. 타입 해석(internal, 예: XamlTypeResolver): 기본 xmlns `https://github.com/loonacia/xamlity` → Xamlity.Core 어셈블리의 `Xamlity.Controls`,
+         `Xamlity.Layout` 네임스페이스에 있는 public, 비추상, UIElement 파생, 매개변수 없는 public 생성자가 있는 타입. x: 네임스페이스
+         `http://schemas.microsoft.com/winfx/2006/xaml`는 `x:Name` 속성만 지원한다.
+         오류로 보고할 것(조용히 무시하지 마라. 이유: ADR-004): 알 수 없는 요소, 다른 xmlns(clr-namespace 포함 — 다음 계획), x:Name 외 x: 지시어,
+         알 수 없는 속성, `Owner.Property` 형식의 첨부 속성, `<Type.Property>` 프로퍼티 요소(다음 계획), 같은 프로퍼티 중복 설정,
+         content property가 없는 타입의 자식 요소, 단일 값 content property(Border.Child)에 자식 두 개 이상, 공백이 아닌 텍스트 콘텐츠.
+         xmlns 선언 속성은 오류가 아니다.
+      6. 프로퍼티 해석: 속성 이름 → `DependencyProperty.FromName(type, name)`, 없으면 public 인스턴스 쓰기 가능 CLR 프로퍼티.
+         값 검증(internal 변환기, 예: XamlValueConverter `bool TryConvert(string text, Type targetType, DependencyProperty dp, out object value, out string error)`):
+         string; double(InvariantCulture, "Auto"는 WidthProperty/HeightProperty에서만 NaN, 단위 접미사는 오류); int; bool; enum(대소문자 무시, WPF EnumConverter와 같음);
+         Thickness("a" / "a,b" / "a,b,c,d", 쉼표나 공백 구분, WPF ThicknessConverter와 같음); Brush("#RGB", "#ARGB", "#RRGGBB", "#AARRGGBB",
+         WPF Colors의 이름 있는 색 전체, 대소문자 무시 → SolidColorBrush). 변환할 수 없는 타입(예: UIElement를 속성 문자열로)은 오류.
+         빌더(s8)도 같은 변환기를 쓰므로 파싱과 변환을 분리해 둔다.
+      런타임(Xamlity.Unity)에서 쓰일 코드가 아니다. Unity 쪽 코드를 건드리지 마라. 이유: ADR-003, 런타임은 IR만 읽는다.
+      마크업 확장({Binding} 등), x:Class, x:Key, x:Type, 리소스는 만들지 마라. 이유: 다음 계획 범위다.
+
+      테스트 dotnet/Xamlity.Core.Tests/Markup/XamlParserTests.cs: 정상 문서의 IR 구조(TypeName, 속성 원문, content 자식 순서, x:Name, 줄·열),
+      위 오류 항목 각각에 대해 메시지와 정확한 줄·열, 여러 오류를 한 번에 모으기, `ToString()` 형식, 각 변환기 입력(정상·오류)을 검증한다.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Markup*
+      - unity/Packages/com.loonacia.xamlity/Core/Controls/Border.cs
+      - unity/Packages/com.loonacia.xamlity/Core/Layout/Panel.cs
+      - dotnet/Xamlity.Core.Tests/Markup/*
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s8-core-ir-builder
+    title: serialize IR to bytes and build element trees from it
+    type: feat
+    scope: markup
+    description: |
+      먼저 읽을 파일: docs/ADR.md (ADR-003), docs/ARCHITECTURE.md (`Markup` 영역, 데이터 흐름 > 런타임: 생성, 미정 사항),
+      unity/Packages/com.loonacia.xamlity/Core/Markup/*.cs (s7의 IR, 변환기), dotnet/Xamlity.Core.Tests/Markup/XamlParserTests.cs.
+
+      1. `public static class XamlIrSerializer { byte[] Serialize(XamlDocument document); XamlDocument Deserialize(byte[] data); }` (Core/Markup/).
+         BinaryWriter/BinaryReader(UTF-8)를 쓴다. 헤더: 매직 4바이트 `XAIR` + int32 포맷 버전 1. 매직이 다르거나 버전이 다르거나 데이터가 잘리면
+         `InvalidDataException`(메시지에 기대·실제 버전). IR의 모든 필드(TypeName, Name, Line, Column, 프로퍼티 노드의 TextValue/Objects)를 왕복한다.
+      2. `public static class XamlBuilder { object Build(XamlDocument document); }`: 노드마다 `Type.GetType(TypeName, throwOnError: true)`(타입 캐시)와
+         매개변수 없는 생성자로 객체를 만들고, 프로퍼티 노드를 문서 순서대로 적용한다. DP는 s7 변환기로 변환해 SetValue, CLR 프로퍼티는
+         PropertyInfo.SetValue(PropertyInfo 캐시), content가 컬렉션(Children)이면 Add, 단일(Child)이면 대입. x:Name은 FrameworkElement.Name에 넣는다.
+         변환 실패 등 예상 밖 상황은 `XamlBuildException`(줄·열 포함)으로 던진다. 정상 경로에서는 일어나지 않는다(파서가 이미 검증함).
+         Reflection.Emit이나 런타임 코드 생성을 쓰지 마라. 이유: ADR-012, IL2CPP에서 지원되지 않는다. XAML 텍스트를 받는 Build 오버로드를 만들지 마라.
+         이유: ADR-003, 런타임은 IR만 읽는다.
+      3. docs/ARCHITECTURE.md: "미정 사항"에서 "IR 직렬화 형식" 항목을 지우고, `Markup` 설명 근처에 결정된 형식(헤더, 필드 순서, 값은 원문 문자열이며
+         빌더가 변환, 버전을 올려야 하는 경우)을 짧게 적는다.
+
+      테스트 dotnet/Xamlity.Core.Tests/Markup/XamlBuilderTests.cs: 직렬화 왕복 후 IR이 같음, 잘못된 매직·버전·잘린 데이터 예외, 그리고 끝에서 끝까지:
+      XAML 텍스트(StackPanel 안에 Background·BorderBrush·BorderThickness·Padding이 있는 Border와 그 안 TextBlock, x:Name) → Parse → Serialize → Deserialize →
+      Build → UIRoot(가짜 measurer) UpdateLayout(예: 400x300) → RecordingDrawingContext로 Render → 기대한 사각형·글리프 런 명령과 절대 좌표.
+      s5·s6 테스트의 RecordingDrawingContext·FakeTextMeasurer를 재사용하고 복사하지 마라.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Markup*
+      - dotnet/Xamlity.Core.Tests/Markup/*
+      - docs/ARCHITECTURE.md
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s9-unity-xaml-importer
+    title: import .xaml files into XamlAsset with ScriptedImporter
+    type: feat
+    scope: editor
+    description: |
+      먼저 읽을 파일: docs/ADR.md (ADR-003, ADR-011의 OnImportAsset 금지 사항), docs/ARCHITECTURE.md (레이어 규칙, 데이터 흐름 > 에디터: 임포트),
+      unity/Packages/com.loonacia.xamlity/Core/Markup/*.cs, Tests/Editor/CoreAssemblyTests.cs (Unity 테스트 스타일).
+
+      1. Runtime/XamlAsset.cs (namespace `Xamlity.Unity`): `public sealed class XamlAsset : ScriptableObject`, `[SerializeField] byte[] ir`.
+         `internal void Initialize(byte[] ir)`, `internal bool HasIr`, `public UIElement Build()` (IR을 XamlIrSerializer로 읽고 XamlBuilder로 만든다.
+         역직렬화한 XamlDocument는 캐시해도 된다). IR이 없으면(임포트 오류) `InvalidOperationException`("... has import errors" 류의 메시지와 에셋 이름).
+         Object 참조 테이블은 아직 만들지 마라. 이유: Image가 다음 계획에서 처음 에셋을 참조한다.
+      2. Editor/XamlImporter.cs (namespace `Xamlity.Editor`): `[ScriptedImporter(1, "xaml")] public sealed class XamlImporter : ScriptedImporter`.
+         OnImportAsset: 파일을 UTF-8로 읽어 `XamlParser.Parse(text, ctx.assetPath)`. 오류마다 `ctx.LogImportError(error.ToString())` — 형식은
+         `Assets/UI/Main.xaml(3,5): message`. 오류가 있어도 IR 없는 XamlAsset을 메인 오브젝트로 넣는다. 이유: 이 에셋을 참조하는 쪽의 참조가 끊기지 않게 한다.
+         정상이면 `XamlIrSerializer.Serialize` 결과를 넣는다. OnImportAsset 안에서 파일을 쓰거나 AssetDatabase.CreateAsset/ImportAsset을 부르지 마라.
+         이유: ADR-011, import가 재시작되거나 막힌다.
+      3. 테스트(Tests/Editor/XamlImporterTests.cs):
+         - 정상 픽스처 Tests/Editor/TestAssets/Valid.xaml(Border 안 TextBlock): `AssetDatabase.LoadAssetAtPath<XamlAsset>("Packages/com.loonacia.xamlity/Tests/Editor/TestAssets/Valid.xaml")`가
+           null이 아니고 HasIr이며 Build()가 Border를 돌려준다.
+         - 오류: 깨진 XAML을 패키지에 픽스처로 두지 마라. 이유: 프로젝트를 열 때마다 임포트 오류가 난다. 테스트가 `Assets/XamlityTestTemp/` 아래에
+           임시 파일을 쓰고 `AssetDatabase.ImportAsset`한 뒤, 줄·열이 들어간 `Broken.xaml(줄,열): ` 형식의 오류가 났음을 검증하고(LogAssert.Expect 등,
+           실제 동작을 확인해 맞는 방법을 쓴다), 에셋이 HasIr false이며 Build()가 예외를 던짐을 확인한다. TearDown에서 임시 폴더를 AssetDatabase.DeleteAsset으로 지운다.
+      테스트를 Ignore하거나 기대값을 느슨하게 만들어 통과시키지 마라. Unity 쪽에서 XAML 텍스트를 런타임에 파싱하는 경로를 만들지 마라(ADR-003).
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Runtime/XamlAsset.cs*
+      - unity/Packages/com.loonacia.xamlity/Editor/XamlImporter.cs*
+      - unity/Packages/com.loonacia.xamlity/Tests/Editor/XamlImporterTests.cs*
+      - unity/Packages/com.loonacia.xamlity/Tests/Editor/TestAssets*
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s10-unity-tmp-measurer
+    title: measure Korean text with standalone TMP_FontAsset glyph data
+    type: feat
+    scope: unity
+    description: |
+      먼저 읽을 파일: docs/ADR.md (ADR-001, ADR-010 — 이 스텝이 ADR-010의 "첫 텍스트 Unity 스텝" 검증이다), docs/ARCHITECTURE.md (레이어 규칙),
+      unity/Packages/com.loonacia.xamlity/Core/Rendering/ITextMeasurer.cs, FontHandle.cs, FontMetrics.cs, GlyphMetrics.cs, Core/Controls/TextBlock.cs.
+
+      1. Runtime/TmpTextMeasurer.cs (namespace `Xamlity.Unity`): `internal sealed class TmpTextMeasurer : ITextMeasurer`. FontHandle.Source는 `TMP_FontAsset`이다.
+         - GetFontMetrics: `faceInfo`의 ascentLine, descentLine(양수로), lineHeight를 `fontSize / faceInfo.pointSize`(및 faceInfo.scale)로 스케일한 픽셀 값.
+         - TryGetGlyph: `characterLookupTable`에서 찾고, 없고 atlasPopulationMode가 Dynamic이면 `TryAddCharacters`로 한 번 추가를 시도한다.
+           여전히 없으면 false. GlyphIndex = glyph.index, AdvanceWidth = glyph.metrics.horizontalAdvance를 같은 비율(및 glyph.scale)로 스케일.
+           폴백 폰트(fallbackFontAssetTable)는 보지 않는다. 이유: GlyphRun이 폰트 하나만 가지며 폴백은 다음 계획이다.
+         - 이미 있는 글리프 조회는 GC 할당이 없어야 한다. 없는 글자를 추가할 때만 할당을 허용한다.
+         `TMP_Text`나 TextMeshPro 컴포넌트를 쓰지 마라. 자체 래스터라이저나 BMFont 경로를 만들지 마라. 이유: ADR-001, ADR-010.
+      2. 테스트 Tests/Editor/TmpTextMeasurerTests.cs: 샘플 프로젝트의 `Assets/Fonts/NotoSansKR-Regular.otf`(OFL, 이미 저장소에 있음)를
+         `AssetDatabase.LoadAssetAtPath<Font>`로 읽어 `TMP_FontAsset.CreateFontAsset(font, 90, 9, GlyphRenderMode.SDFAA, 1024, 1024, AtlasPopulationMode.Dynamic, true)`로
+         메모리에 동적 폰트 에셋을 만든다(파일로 저장하지 마라). 검증: '한', '글', 'A'의 TryGetGlyph가 true이고 advance > 0, 호출 뒤
+         characterLookupTable에 들어 있음, `atlasTextures[0]`이 null이 아니고 크기가 0보다 큼, GetFontMetrics의 Ascent·LineHeight > 0이고 fontSize에 비례,
+         폰트에 없는 코드 포인트(예: U+E000)는 false. 이미 추가된 글자의 TryGetGlyph는 `Is.Not.AllocatingGCMemory()`.
+         TearDown에서 만든 폰트 에셋, 아틀라스 텍스처, 머티리얼을 DestroyImmediate한다.
+         이 테스트는 패키지 밖(샘플 Assets)의 폰트에 의존한다. 개발 저장소 전용 테스트임을 테스트 클래스 주석 한 줄로 남긴다.
+      CreateFontAsset이 TMP Essential Resources(TMP Settings, 셰이더)를 요구해 실패하면, ugui 패키지에 들어 있는 TMP Essential Resources unitypackage를
+      샘플 프로젝트에 임포트하고(unity/Assets/TextMesh Pro/ 아래에 생김, 네트워크 불필요) decisions에 적는다.
+      TMP_FontAsset을 단독으로 써서 한글 동적 글리프 추가나 아틀라스 조회가 안 되면 우회 구현을 하지 말고 blockers에 적는다. 이유: ADR-010의 전제가
+      깨지면 사람이 설계를 다시 정해야 한다.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Runtime/TmpTextMeasurer.cs*
+      - unity/Packages/com.loonacia.xamlity/Tests/Editor/TmpTextMeasurerTests.cs*
+      - unity/Assets/TextMesh Pro*
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s11-unity-render-rects
+    title: draw Border rectangles via URP renderer feature at AfterRendering
+    type: feat
+    scope: unity
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/ADR.md (ADR-001, ADR-009), docs/ARCHITECTURE.md (레이어 규칙, 데이터 흐름 > 런타임: 매 프레임, 횡단 관심사 > 좌표와 해상도·성능, 미정 사항),
+      unity/Packages/com.loonacia.xamlity/Core/Tree/UIRoot.cs, Core/Rendering/IDrawingContext.cs, Runtime/XamlAsset.cs, Runtime/TmpTextMeasurer.cs,
+      unity/Assets/Settings/PC_Renderer.asset, Mobile_Renderer.asset, unity/ProjectSettings/QualitySettings.asset (Standalone 기본 품질은 PC).
+
+      namespace `Xamlity.Unity` (Runtime/)에 만든다.
+      1. `MeshDrawingContext : IDrawingContext` (internal): DrawRectangle을 사각형 하나당 정점 4개·인덱스 6개로 바꾼다. 위치는 픽셀 단위이고
+         y는 뒤집는다(unityY = viewportHeight − y). 색은 SolidColorBrush.Color → Color32. 그리기 순서를 지키며, 연속된 같은 머티리얼·텍스처 명령을
+         하나의 배치(submesh)로 묶는다. 정점 버퍼는 재사용 List로 채워 `Mesh.SetVertices(List<>)` 류를 써서 재생성 때도 불필요한 할당을 줄인다.
+         DrawGlyphRun은 다음 스텝(s12)에서 구현하므로 지금은 아무것도 그리지 않는다.
+      2. 셰이더 Runtime/Shaders/XamlitySolid.shader (`Xamlity/Solid`): 정점 색 unlit, `Blend SrcAlpha OneMinusSrcAlpha`, `ZTest Always`, `ZWrite Off`, `Cull Off`.
+      3. `XamlityRoot : MonoBehaviour`: `[SerializeField] XamlAsset xaml`. 수명주기: Awake에서 트리 빌드(`xaml.Build()`, `new UIRoot(element, measurer: TmpTextMeasurer,
+         defaultFont: default)` — 기본 폰트 연결은 s13), OnEnable/OnDisable에서 활성 루트 목록 등록·해제, LateUpdate에서 `Refresh(Screen.width, Screen.height)`.
+         `internal void Refresh(int pixelWidth, int pixelHeight)`: UIRoot.UpdateLayout(픽셀 크기 = 논리 크기, 배율은 다음 계획) 후 IsRenderDirty일 때만 메시 재생성.
+         EditMode 테스트에서는 Awake/OnEnable/LateUpdate가 불리지 않으므로 빌드·등록·해제를 테스트가 부를 수 있는 internal 메서드로 분리한다.
+         `[ExecuteAlways]`를 붙이지 마라. 이유: 편집 모드 렌더링은 범위 밖이고 핫리로드 수명주기를 복잡하게 만든다. sortingOrder, 기준 해상도 필드는
+         만들지 마라. 이유: 다음 계획의 화면 호스팅 스텝이다.
+      4. `XamlityRendererFeature : ScriptableRendererFeature` + 내부 `ScriptableRenderPass`: `renderPassEvent = RenderPassEvent.AfterRendering`,
+         `RecordRenderGraph(RenderGraph, ContextContainer)`만 구현한다. UniversalCameraData의 cameraType이 `CameraType.Game`이고 `resolveFinalTarget`이
+         true일 때만 그린다. `resourceData.activeColorTexture`에 raster pass로 활성 루트들의 메시를 등록 순서대로 그린다. 픽셀 좌표 → 클립 공간은 직교 투영으로 하되,
+         back buffer와 RenderTexture에서 y 방향이 같도록 `GL.GetGPUProjectionMatrix`나 `SetViewProjectionMatrices`로 처리한다(하드코딩한 플랫폼 flip 금지).
+         셰이더는 피처의 직렬화 필드로 참조한다. 이유: Shader.Find만 쓰면 빌드에서 셰이더가 빠진다. Compatibility Mode `Execute` 경로,
+         `URP_COMPATIBILITY_MODE` 분기, Built-in/HDRP 코드를 만들지 마라. 이유: ADR-009.
+      5. 샘플 렌더러 unity/Assets/Settings/PC_Renderer.asset과 Mobile_Renderer.asset에 XamlityRendererFeature를 추가한다(셰이더 필드 연결 포함).
+         YAML을 직접 고치거나 일회성 batchmode 스크립트를 써도 되지만, 그 스크립트는 커밋하지 말고 지운다.
+      6. docs/ARCHITECTURE.md "미정 사항"에서 "메시 배치 단위와 셰이더 구성"을 지우고 결정(루트당 Mesh 하나, 연속한 같은 머티리얼·텍스처 명령을 submesh 배치,
+         단색은 Xamlity/Solid, 텍스트는 s12의 SDF 셰이더)을 레이어 규칙이나 횡단 관심사 근처에 짧게 적는다.
+      테스트(Tests/Editor/RenderingTests.cs, 픽스처 Tests/Editor/TestAssets/TopBand.xaml: `<Border Background="Red" Height="64" VerticalAlignment="Top"/>`):
+         - MeshDrawingContext 단위 테스트: 사각형 하나의 정점 위치(y 뒤집힘)와 색, 같은 머티리얼 연속 명령이 배치 하나로 묶임.
+         - 픽셀 테스트: 256x128 RenderTexture를 targetTexture로 가진 Game 카메라(배경 단색 검정), 픽스처로 XamlityRoot 빌드·등록 → Refresh(256,128) →
+           카메라 렌더(`camera.Render()` 또는 `RenderPipeline.SubmitRenderRequest`) → ReadPixels. 위쪽 절반(텍스처 좌표 y > 64)의 픽셀은 빨강, 아래쪽은 검정.
+           활성 URP 렌더러에 XamlityRendererFeature가 없으면 명확한 메시지로 실패한다.
+         - 변화 없는 두 번째 `Refresh(256,128)`는 메시를 다시 만들지 않고(내부 카운터) `Is.Not.AllocatingGCMemory()`.
+         - 테스트가 만든 GameObject, RenderTexture는 TearDown에서 정리하고 활성 루트 목록에서 해제한다.
+      batchmode에서 렌더링 자체가 되지 않으면(그래픽 디바이스 없음 등) 픽셀 테스트를 지우거나 Ignore하지 말고 blockers에 적는다.
+      uGUI, UI Toolkit, EventSystems를 쓰지 마라(ADR-001).
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Runtime/MeshDrawingContext.cs*
+      - unity/Packages/com.loonacia.xamlity/Runtime/XamlityRoot.cs*
+      - unity/Packages/com.loonacia.xamlity/Runtime/XamlityRendererFeature.cs*
+      - unity/Packages/com.loonacia.xamlity/Runtime/Shaders*
+      - unity/Packages/com.loonacia.xamlity/Tests/Editor/RenderingTests.cs*
+      - unity/Packages/com.loonacia.xamlity/Tests/Editor/TestAssets/TopBand.xaml*
+      - unity/Assets/Settings/PC_Renderer.asset
+      - unity/Assets/Settings/Mobile_Renderer.asset
+      - docs/ARCHITECTURE.md
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s12-unity-render-text
+    title: draw TextBlock glyphs from TMP atlas with an SDF shader
+    type: feat
+    scope: unity
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/ADR.md (ADR-010), docs/ARCHITECTURE.md (s11에서 적은 배치·셰이더 결정), unity/Packages/com.loonacia.xamlity/Runtime/*.cs,
+      Runtime/Shaders/XamlitySolid.shader, Tests/Editor/RenderingTests.cs, Tests/Editor/TmpTextMeasurerTests.cs, Core/Rendering/GlyphRun.cs.
+
+      1. MeshDrawingContext.DrawGlyphRun 구현: 글리프마다 TMP 글리프(GlyphIndex로 `glyphLookupTable` 조회)의 metrics(bearing, 크기)와 glyphRect(atlasPadding 포함)로
+         기준선 원점 + 누적 advance 위치에 쿼드를 만든다. UV는 `atlasTextures[glyph.atlasIndex]` 크기로 정규화, 색은 Foreground. 배치 키는 텍스트 머티리얼 + 아틀라스 텍스처.
+         배치별 텍스처는 MaterialPropertyBlock으로 넘긴다(배치마다 머티리얼을 복제하지 마라. 이유: 할당과 머티리얼 누수).
+      2. 셰이더 Runtime/Shaders/XamlityText.shader (`Xamlity/Text`): 아틀라스 알파의 SDF 값을 0.5 경계로 `fwidth` 기반 smoothstep 커버리지로 바꿔
+         정점 색 알파에 곱한다. 블렌드·깊이 설정은 Xamlity/Solid와 같다. 피처의 직렬화 필드로 참조하고 샘플 렌더러 에셋 두 개에 연결한다.
+      3. XamlityRoot: 테스트가 기본 폰트(TMP_FontAsset)를 넣어 빌드할 수 있는 internal 경로를 둔다. 설정 에셋에서 기본 폰트를 읽는 것은 s13이다.
+      4. 동적 아틀라스는 측정 중 TryAddCharacters로 커질 수 있다. 메시는 같은 프레임의 레이아웃 뒤에 만들어지므로 UV는 그 시점 아틀라스 크기로 계산한다.
+      테스트(RenderingTests.cs에 추가, 픽스처 Tests/Editor/TestAssets/KoreanText.xaml: 왼쪽 위에 `<TextBlock Text="한글" FontSize="48" Foreground="White"/>`):
+         - s10 테스트처럼 샘플 폰트로 메모리 동적 폰트 에셋을 만들어 기본 폰트로 쓴다.
+         - MeshDrawingContext 단위 테스트: 글리프 2개 → 정점 8개, UV가 [0,1] 범위, 배치 텍스처가 아틀라스.
+         - 픽셀 테스트(256x128, 검정 배경): TextBlock의 RenderSize 영역 안에 밝은 픽셀(예: R > 128)이 일정 수 이상 있고, 그 영역 밖 오른쪽 아래는 모두 검정.
+         - 변화 없는 두 번째 Refresh는 `Is.Not.AllocatingGCMemory()` (텍스트 포함).
+      s11과 같이 렌더링이 batchmode에서 불가능하면 blockers에 적는다. 테스트를 지우거나 Ignore하지 마라.
+      TextWrapping, TextAlignment, 폴백 폰트, 클립을 만들지 마라. 이유: 다음 계획 범위다.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Runtime/MeshDrawingContext.cs
+      - unity/Packages/com.loonacia.xamlity/Runtime/XamlityRoot.cs
+      - unity/Packages/com.loonacia.xamlity/Runtime/XamlityRendererFeature.cs
+      - unity/Packages/com.loonacia.xamlity/Runtime/Shaders*
+      - unity/Packages/com.loonacia.xamlity/Tests/Editor/RenderingTests.cs
+      - unity/Packages/com.loonacia.xamlity/Tests/Editor/TestAssets/KoreanText.xaml*
+      - unity/Assets/Settings/PC_Renderer.asset
+      - unity/Assets/Settings/Mobile_Renderer.asset
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s13-sample-scene
+    title: add XamlitySettings default font and Korean hello sample scene
+    type: feat
+    scope: sample
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/PRD.md (핵심 기능 4, 12, 범위 밖의 폰트 항목), docs/ARCHITECTURE.md (횡단 관심사 > 설정),
+      unity/Packages/com.loonacia.xamlity/Runtime/*.cs, unity/Assets/Scenes/SampleScene.unity, unity/ProjectSettings/EditorBuildSettings.asset.
+
+      1. Runtime/XamlitySettings.cs: `public sealed class XamlitySettings : ScriptableObject`, `[SerializeField] TMP_FontAsset defaultFont` + 읽기 프로퍼티,
+         `internal static XamlitySettings Load()` = `Resources.Load<XamlitySettings>("XamlitySettings")` (결과 캐시). XamlityRoot는 Awake에서 이 기본 폰트를 UIRoot에 넘긴다.
+         설정이나 폰트가 없으면 `Debug.LogWarning`을 한 번 남기고 텍스트 없이 동작한다. Project Settings > Xamlity UI(SettingsProvider)와 App.xaml 지정은
+         만들지 마라. 이유: 다음 계획의 화면 호스팅·설정 스텝에서 이 에셋 위에 UI를 얹는다.
+      2. 샘플 에셋(unity/Assets/):
+         - Fonts/NotoSansKR-Regular SDF.asset: Fonts/NotoSansKR-Regular.otf로 만든 동적(SDFAA) TMP 폰트 에셋. TMP API로 만들어야 하므로 일회성 batchmode
+           스크립트(`unity run` + `-executeMethod`)를 써도 되며, 그 스크립트는 커밋하지 말고 지운다. 동적 글리프 데이터가 저장소에 쌓이지 않도록
+           만든 직후의 빈 아틀라스 상태로 저장한다.
+         - Resources/XamlitySettings.asset: defaultFont = 위 폰트 에셋.
+         - Samples/Hello/Hello.xaml: StackPanel(가운데 정렬) 안에 Background·BorderBrush·BorderThickness·Padding이 있는 Border와, 그 안 TextBlock
+           "안녕하세요, Xamlity!"(FontSize 32, Foreground White), 그 아래 영문 TextBlock 하나.
+         - Scenes/SampleScene.unity: `XamlityRoot` GameObject를 추가하고 xaml = Hello.xaml.
+      3. 테스트 Tests/Editor/SampleSetupTests.cs (개발 저장소 전용임을 주석 한 줄로): `XamlitySettings.Load()`가 null이 아니고 defaultFont가 동적 폰트이며
+         sourceFontFile이 연결됨, Hello.xaml이 HasIr이고 Build()가 성공, SampleScene에 XamlityRoot가 있고 Hello.xaml을 참조함
+         (씬은 `EditorSceneManager.OpenScene(..., OpenSceneMode.Additive)`로 열고 테스트 끝에 닫는다). 저장된 폰트 에셋에 글자를 추가하지 마라. 이유: 에셋이 바뀌어 git에 남는다.
+      한글이 실제로 화면에 보이는지는 사람이 Play 모드에서 확인한다(PRD 기능 4의 수동 확인). summary에 확인 방법(씬 이름, 기대 화면)을 적는다.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Runtime/XamlitySettings.cs*
+      - unity/Packages/com.loonacia.xamlity/Runtime/XamlityRoot.cs
+      - unity/Packages/com.loonacia.xamlity/Tests/Editor/SampleSetupTests.cs*
+      - unity/Assets/Fonts/NotoSansKR-Regular SDF.asset*
+      - unity/Assets/Resources*
+      - unity/Assets/Samples*
+      - unity/Assets/Scenes/SampleScene.unity
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
