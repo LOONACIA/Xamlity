@@ -45,7 +45,7 @@ Core 내부는 다음 영역으로 나눈다. 폴더 이름은 네임스페이�
 - 프로퍼티: `PropertyName`, `OwnerTypeName`, `Line`, `Column`, `TextValue`, 자식 객체 개수, 문서 순서의 자식 객체들. `OwnerTypeName`은 첨부 프로퍼티의 소유 타입을 `"<CLR 전체 이름>, <어셈블리 이름>"`으로 저장하고 일반 프로퍼티는 null이다.
 - 줄·열·개수는 int32이고, 문자열은 존재 여부 bool 1바이트 뒤에 값이 있으면 `BinaryWriter.Write(string)`의 7비트 가변 길이 바이트 수와 UTF-8 데이터를 쓴다(null과 빈 문자열 구분).
 
-값은 파서가 보존한 원문 문자열이며 런타임 빌더가 변환한다. 필드 추가·삭제·순서·인코딩 또는 값 해석의 호환성이 바뀌면 포맷 버전을 올리고 IR을 재임포트한다. 다른 매직·버전(v1 포함)이나 잘린 데이터는 `InvalidDataException`으로 거부한다. XAML 임포터 버전도 2로 올려 기존 v1 에셋을 다시 임포트한다.
+값은 파서가 보존한 원문 문자열이며 런타임 빌더가 변환한다. 필드 추가·삭제·순서·인코딩 또는 값 해석의 호환성이 바뀌면 포맷 버전을 올리고 IR을 재임포트한다. 다른 매직·버전(v1 포함)이나 잘린 데이터는 `InvalidDataException`으로 거부한다. XAML 임포터 버전은 3이며, IR v2를 유지하면서 이미지 참조 테이블을 생성하도록 기존 에셋을 다시 임포트한다.
 
 ## 레이어 규칙
 - 의존 방향은 `Xamlity.Editor → Xamlity.Unity → Xamlity.Core` 한 방향이다. Core는 다른 어셈블리를 모른다. 이유: Core를 Unity 없이 `dotnet test`로 검증하고, 다른 엔진으로 옮길 가능성을 열어 둔다.
@@ -64,7 +64,8 @@ Core 내부는 다음 영역으로 나눈다. 폴더 이름은 네임스페이�
   → XamlImporter (ScriptedImporter, Editor)
       Core 파서 → IR
       타입·프로퍼티 해석, x:DataType 바인딩 경로 검증
-      에셋 경로 → UnityEngine.Object 참조 (IR 안에서는 인덱스)
+      에셋 경로 → UnityEngine.Object 참조 (IR에는 원문 문자열 유지, XamlAsset에 원문 값 → Object 참조 테이블)
+      이미지 경로마다 존재하면 artifact 의존성, 없으면 소스 의존성 등록
       참조한 어셈블리마다 커스텀 의존성 등록, 다른 XAML(MergedDictionaries 등)은 소스 의존성 등록
       오류 → ctx에 "파일(줄,열): 메시지"
   → XamlAsset (IR 바이트 + Object 참조 테이블)
@@ -72,7 +73,7 @@ Core 내부는 다음 영역으로 나눈다. 폴더 이름은 네임스페이�
 
 [런타임: 생성]
 XamlityRoot.Awake
-  → XamlAsset → Core 빌더 → 요소 트리
+  → XamlAsset → 참조 테이블의 UnityImageSource 해석기를 주입한 Core 빌더 → 요소 트리
      (x:Class면 그 타입을 생성하고 InitializeComponent 호출)
   → 암시적 Style·ControlTemplate 적용 (요소 → 부모 → App.xaml → 기본 테마)
   → 코드에서 DataContext 설정 → 바인딩 연결

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using Xamlity.Properties;
+using Xamlity.Rendering;
 using Xamlity.Tree;
 
 namespace Xamlity.Markup
@@ -13,14 +14,16 @@ namespace Xamlity.Markup
             new Dictionary<(Type, string), PropertyInfo>();
         private static readonly Dictionary<Type, MethodInfo> CollectionAddMethods = new Dictionary<Type, MethodInfo>();
 
-        public static object Build(XamlDocument document)
+        public static object Build(XamlDocument document) => Build(document, null);
+
+        public static object Build(XamlDocument document, IXamlAssetResolver assetResolver)
         {
             if (document == null)
                 throw new ArgumentNullException(nameof(document));
-            return BuildObject(document.Root);
+            return BuildObject(document.Root, assetResolver);
         }
 
-        private static object BuildObject(XamlObjectNode node)
+        private static object BuildObject(XamlObjectNode node, IXamlAssetResolver assetResolver)
         {
             try
             {
@@ -29,7 +32,7 @@ namespace Xamlity.Markup
                 if (node.Name != null)
                     ((FrameworkElement)instance).Name = node.Name;
                 foreach (XamlPropertyNode property in node.Properties)
-                    ApplyProperty(instance, type, property);
+                    ApplyProperty(instance, type, property, assetResolver);
                 return instance;
             }
             catch (XamlBuildException)
@@ -43,7 +46,8 @@ namespace Xamlity.Markup
             }
         }
 
-        private static void ApplyProperty(object instance, Type type, XamlPropertyNode node)
+        private static void ApplyProperty(object instance, Type type, XamlPropertyNode node,
+            IXamlAssetResolver assetResolver)
         {
             try
             {
@@ -64,7 +68,14 @@ namespace Xamlity.Markup
                     throw new InvalidOperationException($"Unknown or read-only property '{node.PropertyName}'.");
                 if (node.TextValue != null)
                 {
-                    if (!XamlValueConverter.TryConvert(node.TextValue, propertyType, dp, out object value, out string error))
+                    object value;
+                    if (propertyType == typeof(ImageSource))
+                    {
+                        if (assetResolver == null)
+                            throw new InvalidOperationException("ImageSource properties require an asset resolver.");
+                        value = assetResolver.ResolveImage(node.TextValue);
+                    }
+                    else if (!XamlValueConverter.TryConvert(node.TextValue, propertyType, dp, out value, out string error))
                         throw new InvalidOperationException(error);
                     if (dp != null)
                         ((DependencyObject)instance).SetValue(dp, value);
@@ -83,13 +94,13 @@ namespace Xamlity.Markup
                             CollectionAddMethods.Add(collection, add);
                         }
                         foreach (XamlObjectNode child in node.Objects)
-                            add.Invoke(children, new[] { BuildObject(child) });
+                            add.Invoke(children, new[] { BuildObject(child, assetResolver) });
                     }
                     else
                     {
                         if (node.Objects.Count != 1)
                             throw new InvalidOperationException("A single content property requires exactly one object.");
-                        object value = BuildObject(node.Objects[0]);
+                        object value = BuildObject(node.Objects[0], assetResolver);
                         if (dp != null)
                             ((DependencyObject)instance).SetValue(dp, value);
                         else

@@ -4,6 +4,7 @@ using System.IO;
 using System.Reflection;
 using System.Xml;
 using Xamlity.Properties;
+using Xamlity.Rendering;
 using Xamlity.Tree;
 
 namespace Xamlity.Markup
@@ -13,6 +14,7 @@ namespace Xamlity.Markup
         public static XamlParseResult Parse(string text, string fileName)
         {
             var errors = new List<XamlError>();
+            var assetReferences = new List<XamlAssetReference>();
             XamlObjectNode root = null;
             var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null };
             try
@@ -20,7 +22,7 @@ namespace Xamlity.Markup
                 using (var input = new StringReader(text))
                 using (XmlReader reader = XmlReader.Create(input, settings))
                 {
-                    var parser = new Parser(reader, fileName, errors);
+                    var parser = new Parser(reader, fileName, errors, assetReferences);
                     reader.MoveToContent();
                     root = parser.ReadObject(isRoot: true);
                     // Read through EOF so malformed trailing XML is also reported.
@@ -33,7 +35,7 @@ namespace Xamlity.Markup
                     Math.Max(1, exception.LinePosition), exception.Message));
             }
             return new XamlParseResult(errors.Count == 0 ? new XamlDocument { Root = root } : null,
-                errors.AsReadOnly());
+                errors.AsReadOnly(), assetReferences.AsReadOnly());
         }
 
         private sealed class Parser
@@ -42,13 +44,16 @@ namespace Xamlity.Markup
             private readonly IXmlLineInfo location;
             private readonly string fileName;
             private readonly List<XamlError> errors;
+            private readonly List<XamlAssetReference> assetReferences;
 
-            internal Parser(XmlReader reader, string fileName, List<XamlError> errors)
+            internal Parser(XmlReader reader, string fileName, List<XamlError> errors,
+                List<XamlAssetReference> assetReferences)
             {
                 this.reader = reader;
                 location = (IXmlLineInfo)reader;
                 this.fileName = fileName;
                 this.errors = errors;
+                this.assetReferences = assetReferences;
             }
 
             // Starts on an element and leaves the reader on the following node.
@@ -282,6 +287,16 @@ namespace Xamlity.Markup
                     }
                     if (propertyType == null)
                         Error($"Unknown or read-only property '{name}' on type '{type.Name}'.");
+                    else if (propertyType == typeof(ImageSource))
+                    {
+                        if (string.IsNullOrWhiteSpace(reader.Value))
+                            Error($"Property '{name}': Image asset paths must not be empty.");
+                        else if (reader.Value.TrimStart().StartsWith("{", StringComparison.Ordinal))
+                            Error($"Property '{name}': Markup extensions are not supported.");
+                        else
+                            assetReferences.Add(new XamlAssetReference(reader.Value,
+                                location.LineNumber, location.LinePosition));
+                    }
                     else if (!XamlValueConverter.TryConvert(reader.Value, propertyType, dp, out _, out string error))
                         Error($"Property '{name}': {error}");
                     node.Properties.Add(new XamlPropertyNode { PropertyName = name, OwnerTypeName = ownerTypeName, TextValue = reader.Value,
