@@ -1,0 +1,41 @@
+# Unity project (unity/)
+/unity/[Ll]ibrary/
+/unity/[Tt]emp/
+/unity/[Oo]bj/
+/unity/[Bb]uild/
+/unity/[Bb]uilds/
+/unity/[Ll]ogs/
+/unity/[Uu]ser[Ss]ettings/
+/unity/[Mm]emoryCaptures/
+/unity/[Rr]ecordings/
+/unity/.utmp/
+/unity/*.csproj
+/unity/*.sln
+/unity/*.slnx
+/unity/sysinfo.txt
+/unity/crashlytics-build.properties
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+
+# .NET projects (dotnet/)
+/dotnet/**/[Bb]in/
+/dotnet/**/[Oo]bj/
+/dotnet/**/TestResults/
+
+# Python (harness scripts)
+__pycache__/
+
+# Local tool settings
+.claude/settings.local.json
+
+# IDE
+.vs/
+.idea/
+*.suo
+*.user
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
