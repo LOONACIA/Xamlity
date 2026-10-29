@@ -2,11 +2,15 @@ namespace Xamlity.Rendering
 {
     public sealed class SolidColorBrush : Brush
     {
+        public SolidColorBrush()
+        {
+        }
+
         public SolidColorBrush(Color color)
         {
             Color = color;
         }
 
-        public Color Color { get; }
+        public Color Color { get; set; }
     }
 }

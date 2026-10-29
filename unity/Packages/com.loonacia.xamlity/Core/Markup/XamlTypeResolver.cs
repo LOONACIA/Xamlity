@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using Xamlity.Properties;
@@ -18,13 +19,15 @@ namespace Xamlity.Markup
 
             Assembly assembly = typeof(UIElement).Assembly;
             Type type = assembly.GetType("Xamlity.Controls." + name)
-                ?? assembly.GetType("Xamlity.Layout." + name);
-            return type != null && type.IsPublic && !type.IsAbstract &&
-                typeof(UIElement).IsAssignableFrom(type) && type.GetConstructor(Type.EmptyTypes) != null
+                ?? assembly.GetType("Xamlity.Layout." + name)
+                ?? assembly.GetType("Xamlity.Rendering." + name);
+            return type != null && type.IsPublic && type.IsClass && !type.IsAbstract &&
+                type.GetConstructor(Type.EmptyTypes) != null
                 ? type : null;
         }
 
-        internal static Type ResolveProperty(Type type, string name, out DependencyProperty dp)
+        internal static Type ResolveProperty(Type type, string name, out DependencyProperty dp,
+            bool allowCollections = false)
         {
             // Reflection alone does not run the initializers that register dependency properties.
             for (Type current = type; current != null; current = current.BaseType)
@@ -34,8 +37,22 @@ namespace Xamlity.Markup
                 return dp.PropertyType;
 
             PropertyInfo property = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
-            return property != null && property.SetMethod != null && property.SetMethod.IsPublic &&
-                property.GetIndexParameters().Length == 0 ? property.PropertyType : null;
+            return property != null && property.GetIndexParameters().Length == 0 &&
+                ((property.SetMethod != null && property.SetMethod.IsPublic) ||
+                (allowCollections && property.GetMethod != null && property.GetMethod.IsPublic &&
+                    GetCollectionInterface(property.PropertyType) != null)) ? property.PropertyType : null;
+        }
+
+        internal static Type GetCollectionInterface(Type type)
+        {
+            if (type == null)
+                return null;
+            if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(ICollection<>))
+                return type;
+            foreach (Type implemented in type.GetInterfaces())
+                if (implemented.IsGenericType && implemented.GetGenericTypeDefinition() == typeof(ICollection<>))
+                    return implemented;
+            return null;
         }
     }
 }

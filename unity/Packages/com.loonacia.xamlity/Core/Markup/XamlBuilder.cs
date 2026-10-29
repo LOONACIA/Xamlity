@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
-using Xamlity.Layout;
 using Xamlity.Properties;
 using Xamlity.Tree;
 
@@ -12,6 +11,7 @@ namespace Xamlity.Markup
         private static readonly Dictionary<string, Type> Types = new Dictionary<string, Type>();
         private static readonly Dictionary<(Type, string), PropertyInfo> Properties =
             new Dictionary<(Type, string), PropertyInfo>();
+        private static readonly Dictionary<Type, MethodInfo> CollectionAddMethods = new Dictionary<Type, MethodInfo>();
 
         public static object Build(XamlDocument document)
         {
@@ -51,11 +51,12 @@ namespace Xamlity.Markup
         {
             try
             {
+                Type propertyType = XamlTypeResolver.ResolveProperty(type, node.PropertyName,
+                    out DependencyProperty dp, allowCollections: node.TextValue == null);
+                if (propertyType == null)
+                    throw new InvalidOperationException($"Unknown or read-only property '{node.PropertyName}'.");
                 if (node.TextValue != null)
                 {
-                    Type propertyType = XamlTypeResolver.ResolveProperty(type, node.PropertyName, out DependencyProperty dp);
-                    if (propertyType == null)
-                        throw new InvalidOperationException($"Unknown or read-only property '{node.PropertyName}'.");
                     if (!XamlValueConverter.TryConvert(node.TextValue, propertyType, dp, out object value, out string error))
                         throw new InvalidOperationException(error);
                     if (dp != null)
@@ -65,18 +66,27 @@ namespace Xamlity.Markup
                 }
                 else
                 {
-                    PropertyInfo property = GetProperty(type, node.PropertyName);
-                    if (property.PropertyType == typeof(UIElementCollection))
+                    Type collection = XamlTypeResolver.GetCollectionInterface(propertyType);
+                    if (collection != null)
                     {
-                        var children = (UIElementCollection)property.GetValue(instance);
+                        object children = GetProperty(type, node.PropertyName).GetValue(instance);
+                        if (!CollectionAddMethods.TryGetValue(collection, out MethodInfo add))
+                        {
+                            add = collection.GetMethod("Add");
+                            CollectionAddMethods.Add(collection, add);
+                        }
                         foreach (XamlObjectNode child in node.Objects)
-                            children.Add((UIElement)BuildObject(child));
+                            add.Invoke(children, new[] { BuildObject(child) });
                     }
                     else
                     {
                         if (node.Objects.Count != 1)
                             throw new InvalidOperationException("A single content property requires exactly one object.");
-                        property.SetValue(instance, BuildObject(node.Objects[0]));
+                        object value = BuildObject(node.Objects[0]);
+                        if (dp != null)
+                            ((DependencyObject)instance).SetValue(dp, value);
+                        else
+                            GetProperty(type, node.PropertyName).SetValue(instance, value);
                     }
                 }
             }

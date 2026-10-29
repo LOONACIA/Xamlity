@@ -7,6 +7,7 @@ using Xamlity.Controls;
 using Xamlity.Core.Tests.Rendering;
 using Xamlity.Layout;
 using Xamlity.Markup;
+using Xamlity.Properties;
 using Xamlity.Rendering;
 using Xamlity.Tree;
 
@@ -161,6 +162,89 @@ namespace Xamlity.Core.Tests.Markup
             Assert.That(instance.GetValue(XamlParserTests.ClrProperties.ValueProperty), Is.EqualTo(1.25));
             Assert.That(instance.Value, Is.Null);
             Assert.That(instance.Text, Is.EqualTo("  한글  "));
+        }
+
+        [Test]
+        public void RoundTripsPropertyElementsAndRendersBrushColorsInChildOrder()
+        {
+            string xaml = "<StackPanel " + Namespaces + ">\n  <StackPanel.Children>\n" +
+                "    <Border Height=\"20\"><Border.Background><SolidColorBrush Color=\"#336699\"/>" +
+                "</Border.Background><Border.Child><Border Height=\"10\"><Border.Background>" +
+                "<SolidColorBrush Color=\"Blue\"/></Border.Background></Border></Border.Child></Border>\n" +
+                "    <Border Height=\"30\"><Border.Background><SolidColorBrush Color=\"Red\"/>" +
+                "</Border.Background></Border>\n  </StackPanel.Children>\n</StackPanel>";
+            XamlDocument original = Parse(xaml);
+            XamlDocument restored = XamlIrSerializer.Deserialize(XamlIrSerializer.Serialize(original));
+            AssertObjectEqual(original.Root, restored.Root);
+            var panel = (StackPanel)XamlBuilder.Build(restored);
+            Assert.That(panel.Children.Count, Is.EqualTo(2));
+            Assert.That(panel.Children.Cast<Border>().Select(b => b.Height), Is.EqualTo(new[] { 20.0, 30.0 }));
+            var first = (Border)panel.Children[0];
+            Assert.That(first.Background, Is.TypeOf<SolidColorBrush>());
+            Assert.That(((SolidColorBrush)first.Background).Color, Is.EqualTo(Color.FromRgb(51, 102, 153)));
+            Assert.That(first.Child, Is.TypeOf<Border>());
+            var root = new UIRoot(panel);
+            root.UpdateLayout(new Size(100, 100));
+            var context = new RecordingDrawingContext();
+            root.Render(context);
+            Assert.That(context.Rectangles.Select(c => ((SolidColorBrush)c.Brush).Color), Is.EqualTo(new[] {
+                Color.FromRgb(51, 102, 153), Color.FromRgb(0, 0, 255), Color.FromRgb(255, 0, 0) }));
+
+            // Brushes are not Freezables: changing a brush does not invalidate its owner.
+            ((SolidColorBrush)first.Background).Color = Color.FromRgb(1, 2, 3);
+            Assert.That(root.IsRenderDirty, Is.False);
+        }
+
+        [Test]
+        public void BuildsEmptyExplicitCollection()
+        {
+            var document = Parse("<StackPanel " + Namespaces + "><Panel.Children /></StackPanel>");
+            var panel = (StackPanel)XamlBuilder.Build(XamlIrSerializer.Deserialize(XamlIrSerializer.Serialize(document)));
+            Assert.That(panel.Children, Is.Empty);
+        }
+
+        [Test]
+        public void BuildsObjectDependencyPropertyBeforeClrWrapper()
+        {
+            var document = DocumentFor(typeof(ObjectProperties));
+            var property = Property("Value", null);
+            property.Objects.Add(DocumentFor(typeof(SolidColorBrush)).Root);
+            document.Root.Properties.Add(property);
+            var instance = (ObjectProperties)XamlBuilder.Build(document);
+            Assert.That(instance.GetValue(ObjectProperties.ValueProperty), Is.TypeOf<SolidColorBrush>());
+            Assert.That(instance.Value, Is.Null);
+        }
+
+        [TestCase("Brushes")]
+        [TestCase("ConcreteBrushes")]
+        public void BuildsReadOnlyGenericCollectionsOfNonElements(string name)
+        {
+            var document = DocumentFor(typeof(ObjectProperties));
+            var property = Property(name, null);
+            foreach (string color in new[] { "Red", "Blue" })
+            {
+                XamlObjectNode brush = DocumentFor(typeof(SolidColorBrush)).Root;
+                brush.Properties.Add(Property("Color", color));
+                property.Objects.Add(brush);
+            }
+            document.Root.Properties.Add(property);
+            // Build twice to exercise the cached ICollection<T>.Add method.
+            for (int index = 0; index < 2; index++)
+            {
+                var instance = (ObjectProperties)XamlBuilder.Build(document);
+                IEnumerable<Brush> brushes = name == "Brushes" ? instance.Brushes : instance.ConcreteBrushes;
+                Assert.That(brushes.Cast<SolidColorBrush>().Select(b => b.Color),
+                    Is.EqualTo(new[] { Color.FromRgb(255, 0, 0), Color.FromRgb(0, 0, 255) }));
+            }
+        }
+
+        public class ObjectProperties : DependencyObject
+        {
+            public static readonly DependencyProperty ValueProperty = DependencyProperty.Register(
+                "Value", typeof(Brush), typeof(ObjectProperties));
+            public Brush Value { get; set; }
+            public ICollection<Brush> Brushes { get; } = new List<Brush>();
+            public List<Brush> ConcreteBrushes { get; } = new List<Brush>();
         }
 
         [Test]

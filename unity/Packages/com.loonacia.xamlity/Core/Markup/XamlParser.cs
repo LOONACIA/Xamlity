@@ -3,8 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using System.Xml;
-using Xamlity.Layout;
 using Xamlity.Properties;
+using Xamlity.Tree;
 
 namespace Xamlity.Markup
 {
@@ -22,7 +22,7 @@ namespace Xamlity.Markup
                 {
                     var parser = new Parser(reader, fileName, errors);
                     reader.MoveToContent();
-                    root = parser.ReadObject();
+                    root = parser.ReadObject(isRoot: true);
                     // Read through EOF so malformed trailing XML is also reported.
                     while (reader.Read()) { }
                 }
@@ -52,7 +52,7 @@ namespace Xamlity.Markup
             }
 
             // Starts on an element and leaves the reader on the following node.
-            internal XamlObjectNode ReadObject()
+            internal XamlObjectNode ReadObject(bool isRoot = false, Type targetType = null, string propertyName = null)
             {
                 string name = reader.LocalName;
                 Type type = XamlTypeResolver.Resolve(reader.NamespaceURI, name);
@@ -66,13 +66,21 @@ namespace Xamlity.Markup
                 else if (type == null)
                     Error($"Unknown element '{name}'.");
                 if (type != null)
+                {
                     node.TypeName = $"{type.FullName}, {type.Assembly.GetName().Name}";
+                    if (isRoot && !typeof(UIElement).IsAssignableFrom(type))
+                        Error($"Root element '{name}' must be a UIElement.");
+                    if (targetType != null && !targetType.IsAssignableFrom(type))
+                        Error($"Type '{name}' is not assignable to property '{propertyName}' of type '{targetType.Name}'.");
+                }
 
                 var assigned = new HashSet<string>(StringComparer.Ordinal);
                 ReadAttributes(type, node, assigned);
                 string contentName = type?.GetCustomAttribute<ContentPropertyAttribute>(true)?.Name;
-                bool collection = contentName != null &&
-                    type.GetProperty(contentName).PropertyType == typeof(UIElementCollection);
+                Type contentType = contentName == null ? null :
+                    XamlTypeResolver.ResolveProperty(type, contentName, out _, allowCollections: true);
+                Type collection = XamlTypeResolver.GetCollectionInterface(contentType);
+                Type childType = collection == null ? contentType : collection.GetGenericArguments()[0];
                 XamlPropertyNode content = null;
                 bool empty = reader.IsEmptyElement;
                 reader.Read();
@@ -83,6 +91,11 @@ namespace Xamlity.Markup
                 {
                     if (reader.NodeType == XmlNodeType.Element)
                     {
+                        if (reader.LocalName.Contains("."))
+                        {
+                            ReadPropertyElement(type, node, assigned);
+                            continue;
+                        }
                         if (type != null)
                         {
                             if (contentName == null)
@@ -95,10 +108,10 @@ namespace Xamlity.Markup
                                     Line = location.LineNumber, Column = location.LinePosition };
                                 node.Properties.Add(content);
                             }
-                            else if (!collection)
+                            else if (collection == null)
                                 Error($"Content property '{contentName}' accepts only one child.");
                         }
-                        XamlObjectNode child = ReadObject();
+                        XamlObjectNode child = ReadObject(targetType: childType, propertyName: contentName);
                         content?.Objects.Add(child);
                     }
                     else
@@ -112,6 +125,75 @@ namespace Xamlity.Markup
                 }
                 reader.Read();
                 return node;
+            }
+
+            private void ReadPropertyElement(Type ownerType, XamlObjectNode owner, HashSet<string> assigned)
+            {
+                string name = reader.LocalName;
+                int separator = name.IndexOf('.');
+                string ownerName = name.Substring(0, separator);
+                string propertyName = name.Substring(separator + 1);
+                var node = new XamlPropertyNode { PropertyName = propertyName,
+                    Line = location.LineNumber, Column = location.LinePosition };
+                bool matchesOwner = false;
+                for (Type current = ownerType; current != null; current = current.BaseType)
+                    if (current.Name == ownerName)
+                        matchesOwner = true;
+
+                Type propertyType = null;
+                if (reader.NamespaceURI != XamlTypeResolver.DefaultNamespace)
+                    Error($"XML namespace '{reader.NamespaceURI}' is not supported.");
+                else if (ownerType != null)
+                {
+                    if (!matchesOwner)
+                        Error($"Attached property elements are not supported: '{name}'.");
+                    else
+                    {
+                        propertyType = XamlTypeResolver.ResolveProperty(ownerType, propertyName, out _, allowCollections: true);
+                        if (propertyType == null)
+                            Error($"Unknown or read-only property '{propertyName}' on type '{ownerType.Name}'.");
+                        if (!assigned.Add(propertyName))
+                            Error($"Property '{propertyName}' is set more than once.");
+                        owner.Properties.Add(node);
+                    }
+                }
+
+                while (reader.MoveToNextAttribute())
+                    if (reader.NamespaceURI != "http://www.w3.org/2000/xmlns/")
+                        Error("Attributes on property elements are not supported.");
+                reader.MoveToElement();
+                Type collection = XamlTypeResolver.GetCollectionInterface(propertyType);
+                Type childType = collection == null ? propertyType : collection.GetGenericArguments()[0];
+                bool empty = reader.IsEmptyElement;
+                reader.Read();
+                if (!empty)
+                {
+                    while (reader.NodeType != XmlNodeType.EndElement && !reader.EOF)
+                    {
+                        if (reader.NodeType == XmlNodeType.Element)
+                        {
+                            if (reader.LocalName.Contains("."))
+                            {
+                                Error("Property elements cannot directly contain property elements.");
+                                reader.Skip();
+                            }
+                            else
+                                node.Objects.Add(ReadObject(targetType: childType, propertyName: propertyName));
+                        }
+                        else
+                        {
+                            if ((reader.NodeType == XmlNodeType.Text || reader.NodeType == XmlNodeType.CDATA ||
+                                reader.NodeType == XmlNodeType.SignificantWhitespace) &&
+                                !string.IsNullOrWhiteSpace(reader.Value))
+                                Error("Text content is not supported; use a property attribute.");
+                            reader.Read();
+                        }
+                    }
+                    reader.Read();
+                }
+                if (propertyType != null && collection == null && node.Objects.Count != 1)
+                    errors.Add(new XamlError(fileName, node.Line, node.Column,
+                        $"Property '{propertyName}' requires exactly one object."));
             }
 
             private void ReadAttributes(Type type, XamlObjectNode node, HashSet<string> assigned)
@@ -142,6 +224,8 @@ namespace Xamlity.Markup
                         Error($"Property '{name}' is set more than once.");
                     if (xName)
                     {
+                        if (type != null && !typeof(FrameworkElement).IsAssignableFrom(type))
+                            Error($"x:Name is only supported on FrameworkElement types, not '{type.Name}'.");
                         if (!XamlValueConverter.TryConvert(reader.Value, typeof(string), null, out _, out string error))
                             Error(error);
                         node.Name = reader.Value;

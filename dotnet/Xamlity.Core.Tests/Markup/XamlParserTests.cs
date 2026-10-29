@@ -128,13 +128,204 @@ namespace Xamlity.Core.Tests.Markup
                 2, 3, "XML namespace 'urn:other' is not supported.");
         }
 
-        [TestCase("<Border.Child />", "Property elements are not supported: 'Border.Child'.")]
+        [TestCase("<Border.Child />", "Property 'Child' requires exactly one object.")]
         [TestCase("<x:Type />", "XAML directive 'x:Type' is not supported.")]
-        [TestCase("<Border.Resources />", "Property elements are not supported: 'Border.Resources'.")]
+        [TestCase("<Border.Resources />", "Unknown or read-only property 'Resources' on type 'Border'.")]
         public void RejectsUnsupportedElementSyntax(string child, string message)
         {
             AssertError(XamlParser.Parse("<Border " + Namespaces + ">\n  " + child + "\n</Border>", "view.xaml"),
                 2, 4, message);
+        }
+
+        [Test]
+        public void ParsesBrushPropertyElementWithObjectAndPropertyLocations()
+        {
+            var result = XamlParser.Parse("<Border " + Namespaces + ">\n" +
+                "  <Border.Background>\n    <SolidColorBrush Color=\"#336699\"/>\n" +
+                "  </Border.Background>\n</Border>", "view.xaml");
+            Assert.That(result.Errors, Is.Empty);
+            XamlPropertyNode background = result.Document.Root.Properties.Single();
+            Assert.That(background.PropertyName, Is.EqualTo("Background"));
+            Assert.That(background.TextValue, Is.Null);
+            AssertLocation(background.Line, background.Column, 2, 4);
+            XamlObjectNode brush = background.Objects.Single();
+            Assert.That(brush.TypeName, Is.EqualTo("Xamlity.Rendering.SolidColorBrush, Xamlity.Core"));
+            AssertLocation(brush.Line, brush.Column, 3, 6);
+            XamlPropertyNode color = brush.Properties.Single();
+            Assert.That(color.PropertyName, Is.EqualTo("Color"));
+            Assert.That(color.TextValue, Is.EqualTo("#336699"));
+            AssertLocation(color.Line, color.Column, 3, 22);
+        }
+
+        [TestCase("StackPanel")]
+        [TestCase("Panel")]
+        public void ParsesExplicitCollectionWithCurrentOrBaseOwner(string owner)
+        {
+            var result = XamlParser.Parse("<StackPanel " + Namespaces + ">\n  <" + owner + ".Children>\n" +
+                "    <Border />\n    <TextBlock />\n  </" + owner + ".Children>\n</StackPanel>", "view.xaml");
+            Assert.That(result.Errors, Is.Empty);
+            XamlPropertyNode children = result.Document.Root.Properties.Single();
+            Assert.That(children.PropertyName, Is.EqualTo("Children"));
+            Assert.That(children.TextValue, Is.Null);
+            AssertLocation(children.Line, children.Column, 2, 4);
+            Assert.That(children.Objects.Select(c => Type.GetType(c.TypeName)),
+                Is.EqualTo(new[] { typeof(Border), typeof(TextBlock) }));
+        }
+
+        [Test]
+        public void ParsesExplicitSingleChildAndEmptyCollectionWithNamespaceAlias()
+        {
+            var result = XamlParser.Parse("<Border " + Namespaces + ">\n  <Border.Child>\n" +
+                "    <StackPanel><ui:Panel.Children xmlns:ui=\"https://github.com/loonacia/xamlity\" />" +
+                "</StackPanel>\n  </Border.Child>\n</Border>", "view.xaml");
+            Assert.That(result.Errors, Is.Empty);
+            XamlPropertyNode child = result.Document.Root.Properties.Single();
+            Assert.That(child.PropertyName, Is.EqualTo("Child"));
+            AssertLocation(child.Line, child.Column, 2, 4);
+            XamlPropertyNode children = child.Objects.Single().Properties.Single();
+            Assert.That(children.PropertyName, Is.EqualTo("Children"));
+            Assert.That(children.TextValue, Is.Null);
+            Assert.That(children.Objects, Is.Empty);
+        }
+
+        [TestCase("<Border.Child></Border.Child>", "Property 'Child' requires exactly one object.")]
+        [TestCase("<Border.Child><Border /><Border /></Border.Child>", "Property 'Child' requires exactly one object.")]
+        [TestCase("<Grid.Row />", "Attached property elements are not supported: 'Grid.Row'.")]
+        [TestCase("<Canvas.Left />", "Attached property elements are not supported: 'Canvas.Left'.")]
+        [TestCase("<TextBlock.Text />", "Attached property elements are not supported: 'TextBlock.Text'.")]
+        [TestCase("<Border.IsMeasureValid />", "Unknown or read-only property 'IsMeasureValid' on type 'Border'.")]
+        [TestCase("<Border.Child xmlns=\"urn:other\" />", "XML namespace 'urn:other' is not supported.")]
+        public void ReportsPropertyElementErrorsAtOpeningElement(string child, string message)
+        {
+            AssertError(XamlParser.Parse("<Border " + Namespaces + ">\n  " + child + "\n</Border>", "view.xaml"),
+                2, 4, message);
+        }
+
+        [TestCase("Width=\"1\"")]
+        [TestCase("x:Name=\"children\"")]
+        [TestCase("xml:space=\"preserve\"")]
+        public void RejectsPropertyElementAttributesAtAttributeLocation(string attribute)
+        {
+            AssertError(XamlParser.Parse("<StackPanel " + Namespaces + ">\n  <StackPanel.Children\n    " +
+                attribute + " />\n</StackPanel>", "view.xaml"), 3, 5,
+                "Attributes on property elements are not supported.");
+        }
+
+        [Test]
+        public void RejectsDirectlyNestedPropertyElements()
+        {
+            AssertError(XamlParser.Parse("<StackPanel " + Namespaces + ">\n  <StackPanel.Children>\n" +
+                "    <Border.Child />\n  </StackPanel.Children>\n</StackPanel>", "view.xaml"),
+                3, 6, "Property elements cannot directly contain property elements.");
+        }
+
+        [TestCase("abc", 24)]
+        [TestCase("<![CDATA[abc]]>", 33)]
+        public void RejectsTextInCollectionPropertyElement(string text, int column)
+        {
+            AssertError(XamlParser.Parse("<StackPanel " + Namespaces + ">\n  <StackPanel.Children>" + text +
+                "</StackPanel.Children>\n</StackPanel>", "view.xaml"), 2, column,
+                "Text content is not supported; use a property attribute.");
+        }
+
+        [Test]
+        public void RejectsTextOnlySinglePropertyElement()
+        {
+            var result = XamlParser.Parse("<TextBlock " + Namespaces + ">\n  <TextBlock.Text>abc</TextBlock.Text>\n</TextBlock>", "view.xaml");
+            Assert.That(result.Document, Is.Null);
+            Assert.That(result.Errors.Select(e => (e.Line, e.Column, e.Message)), Is.EqualTo(new[] {
+                (2, 19, "Text content is not supported; use a property attribute."),
+                (2, 4, "Property 'Text' requires exactly one object.") }));
+        }
+
+        [TestCase("Border", "", "", "Child", "UIElement")]
+        [TestCase("Border", "<Border.Child>\n", "</Border.Child>", "Child", "UIElement")]
+        [TestCase("StackPanel", "", "", "Children", "UIElement")]
+        [TestCase("StackPanel", "<StackPanel.Children>\n", "</StackPanel.Children>", "Children", "UIElement")]
+        public void RejectsIncompatibleImplicitAndExplicitContent(string owner, string opening, string closing,
+            string property, string target)
+        {
+            AssertError(XamlParser.Parse("<" + owner + " " + Namespaces + ">\n" + opening +
+                "  <SolidColorBrush />\n" + closing + "</" + owner + ">", "view.xaml"),
+                opening.Length == 0 ? 2 : 3, 4,
+                $"Type 'SolidColorBrush' is not assignable to property '{property}' of type '{target}'.");
+        }
+
+        [Test]
+        public void RejectsIncompatibleObjectProperty()
+        {
+            AssertError(XamlParser.Parse("<Border " + Namespaces + ">\n  <Border.Background>\n" +
+                "    <Border />\n  </Border.Background>\n</Border>", "view.xaml"), 3, 6,
+                "Type 'Border' is not assignable to property 'Background' of type 'Brush'.");
+        }
+
+        [Test]
+        public void RejectsNonElementRootAndNameOnNonFrameworkElement()
+        {
+            AssertError(XamlParser.Parse("\n<SolidColorBrush " + Namespaces + " />", "view.xaml"),
+                2, 2, "Root element 'SolidColorBrush' must be a UIElement.");
+            AssertError(XamlParser.Parse("<Border " + Namespaces + ">\n  <Border.Background>\n" +
+                "    <SolidColorBrush\n      x:Name=\"brush\" />\n  </Border.Background>\n</Border>", "view.xaml"),
+                4, 7, "x:Name is only supported on FrameworkElement types, not 'SolidColorBrush'.");
+        }
+
+        [Test]
+        public void RejectsAttributeAndPropertyElementDuplicate()
+        {
+            AssertError(XamlParser.Parse("<Border " + Namespaces + " Background=\"Red\">\n" +
+                "  <Border.Background><SolidColorBrush /></Border.Background>\n</Border>", "view.xaml"),
+                2, 4, "Property 'Background' is set more than once.");
+        }
+
+        [TestCase("Border", "Child")]
+        [TestCase("StackPanel", "Children")]
+        public void RejectsDuplicateExplicitContentAndMixingWithImplicitContent(string owner, string property)
+        {
+            string explicitContent = "<" + owner + "." + property + "><Border /></" + owner + "." + property + ">";
+            foreach (var pair in new[] { (explicitContent, explicitContent), (explicitContent, "<Border />"),
+                ("<Border />", explicitContent) })
+                AssertError(XamlParser.Parse("<" + owner + " " + Namespaces + ">\n  " + pair.Item1 +
+                    "\n  " + pair.Item2 + "\n</" + owner + ">", "view.xaml"),
+                    3, 4, $"Property '{property}' is set more than once.");
+        }
+
+        [TestCase("#aBc", 255, 170, 187, 204)]
+        [TestCase("#8aBc", 136, 170, 187, 204)]
+        [TestCase(" #336699 ", 255, 51, 102, 153)]
+        [TestCase("#8012AbEf", 128, 18, 171, 239)]
+        [TestCase(" transparent ", 0, 255, 255, 255)]
+        [TestCase("rEd", 255, 255, 0, 0)]
+        [TestCase("LightGoldenrodYellow", 255, 250, 250, 210)]
+        public void ConvertsColorUsingBrushColorSyntax(string text, byte a, byte r, byte g, byte b)
+        {
+            Assert.That(XamlValueConverter.TryConvert(text, typeof(Color), null, out object value, out string error), Is.True, error);
+            Assert.That(value, Is.EqualTo(Color.FromArgb(a, r, g, b)));
+            Assert.That(error, Is.Null);
+        }
+
+        [TestCase("")]
+        [TestCase("#12")]
+        [TestCase("#12345")]
+        [TestCase("#1234567")]
+        [TestCase("#123456789")]
+        [TestCase("#zzzzzz")]
+        [TestCase("# 12345")]
+        [TestCase("RebeccaPurple")]
+        [TestCase("ActiveBorder")]
+        [TestCase("sc#1,1,1,1")]
+        public void RejectsInvalidColors(string text)
+        {
+            Assert.That(XamlValueConverter.TryConvert(text, typeof(Color), null, out object value, out string error), Is.False);
+            Assert.That(value, Is.Null);
+            Assert.That(error, Is.EqualTo($"'{text}' is not a valid Color value."));
+        }
+
+        [Test]
+        public void ReportsBrushColorConversionErrorAtAttribute()
+        {
+            AssertError(XamlParser.Parse("<Border " + Namespaces + ">\n  <Border.Background>\n" +
+                "    <SolidColorBrush Color=\"bad\" />\n  </Border.Background>\n</Border>", "view.xaml"),
+                3, 22, "Property 'Color': 'bad' is not a valid Color value.");
         }
 
         [Test]

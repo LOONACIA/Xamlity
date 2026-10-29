@@ -63,6 +63,11 @@ namespace Xamlity.Markup
                 if (TryColor(text.Trim(), out Color color))
                     value = new SolidColorBrush(color);
             }
+            else if (targetType == typeof(Color))
+            {
+                if (TryColor(text.Trim(), out Color color))
+                    value = color;
+            }
             else
             {
                 error = $"Cannot convert text to type '{targetType.FullName}'.";
