@@ -75,7 +75,6 @@ namespace Xamlity.Core.Tests.Rendering
 
         [TestCase("A?B", new[] { 65, 63, 66 }, new uint[] { 66, 67 })]
         [TestCase("A\U0001F600B", new[] { 65, 0x1F600, 66 }, new uint[] { 66, 0x1F601, 67 })]
-        [TestCase("A\r\nB", new[] { 65, 13, 10, 66 }, new uint[] { 66, 14, 11, 67 })]
         [TestCase("??", new[] { 63, 63 }, new uint[0])]
         public void VisitsCodePointsAndSkipsOnlyMissingGlyphs(string value, int[] codePoints, uint[] glyphs)
         {
@@ -90,6 +89,23 @@ namespace Xamlity.Core.Tests.Rendering
             Assert.That(context.GlyphRuns[0].Run.AdvanceWidths.Length, Is.EqualTo(glyphs.Length));
             Assert.That(text.DesiredSize.Width, Is.EqualTo(glyphs.Length * 6));
             Assert.That(text.DesiredSize.Height, Is.EqualTo(14.4).Within(0.000001));
+        }
+
+        [Test]
+        public void CarriageReturnLineFeedCreatesTwoLinesWithoutMeasuringBreakCharacters()
+        {
+            var text = new TextBlock { Text = "A\r\nB" };
+            var measurer = new FakeTextMeasurer();
+            var root = new UIRoot(text, measurer, Font);
+            root.UpdateLayout(Viewport);
+            var context = new RecordingDrawingContext();
+            root.Render(context);
+            Assert.That(measurer.CodePoints, Is.EqualTo(new[] { 65, 66 }));
+            Assert.That(context.GlyphRuns.Count, Is.EqualTo(2));
+            Assert.That(context.GlyphRuns[0].Run.GlyphIndices, Is.EqualTo(new uint[] { 66 }));
+            Assert.That(context.GlyphRuns[1].Run.GlyphIndices, Is.EqualTo(new uint[] { 67 }));
+            Assert.That(text.DesiredSize.Width, Is.EqualTo(6));
+            Assert.That(text.DesiredSize.Height, Is.EqualTo(28.8).Within(0.000001));
         }
 
         [TestCase("")]
