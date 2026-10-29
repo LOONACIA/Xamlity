@@ -35,6 +35,7 @@ Core 내부는 다음 영역으로 나눈다. 폴더 이름은 네임스페이�
 | `Layout` | Measure/Arrange, 무효화, Panel(StackPanel, Grid, Canvas) |
 | `Input` | RoutedEvent 등록·라우팅, 추상 입력 이벤트, 히트 테스트, 포인터 캡처 |
 | `Data` | Binding, DataContext 상속, 경로 해석(리플렉션 캐시), IValueConverter, ICommand 연결 |
+| `Diagnostics` | 로그 인터페이스 `IXamlityLogger`와 전역 주입 지점 `XamlityLog.Logger` |
 | `Styling` | Style/Setter, ResourceDictionary, 리소스 조회, ControlTemplate/DataTemplate, TemplateBinding, Trigger |
 | `Controls` | Border, TextBlock, Image, ContentPresenter, UserControl, ContentControl, Button, ItemsControl, ScrollViewer |
 | `Rendering` | `IDrawingContext`(사각형, 둥근 사각형, 이미지/9-slice, 글리프 런, 클립 push/pop, 불투명도 push/pop), `ITextMeasurer`, 이미지·폰트 핸들 추상 |
@@ -92,7 +93,7 @@ Input System → 추상 입력 이벤트 → 히트 테스트 → RoutedEvent �
 
 ## 횡단 관심사
 - **에러 처리**: XAML 오류는 가능한 한 임포트 시점에 `파일(줄,열): 메시지`로 낸다. 런타임에서 `x:DataType`이 없는 바인딩의 경로를 찾지 못하면 예외 대신 경고 로그를 남긴다(WPF 방식).
-- **로깅**: Core는 로그 인터페이스를 주입받는다. Unity 어댑터는 이를 `Debug.Log` 계열로 연결한다.
+- **로깅**: Core는 `XamlityLog.Logger`로 `IXamlityLogger`를 주입받으며, null이면 로그를 버린다. Unity 어댑터는 이를 `Debug.Log` 계열로 연결한다.
 - **설정**: Project Settings > Xamlity(`XamlitySettings` 에셋)에서 앱 리소스(App.xaml)와 기본 폰트(TMP 폰트 에셋)를 지정한다. 루트마다 다른 값(XAML 에셋, sortingOrder, 기준 해상도)은 `XamlityRoot` 컴포넌트에 둔다.
 - **좌표와 해상도**: XAML 단위는 논리 픽셀이다. `XamlityRoot`의 기준 해상도는 기본 1920×1080이며, 배율은 `s = min(화면 픽셀 너비 / 기준 너비, 화면 픽셀 높이 / 기준 높이)`이다. 기준 해상도의 성분이 0 이하면 배율은 1이다. Core 레이아웃과 글자 측정은 논리 단위를 유지하고, 논리 viewport는 `(화면 픽셀 너비 / s, 화면 픽셀 높이 / s)`이다. 어댑터는 클립된 사각형과 글리프 좌표에 배율을 적용한 뒤 back buffer용 y-flip을 처리한다.
 - **성능**: 레이아웃과 렌더링은 무효화 플래그로 동작한다. 변화가 없는 프레임은 Measure/Arrange와 메시 재생성을 건너뛰고 GC 할당 0을 목표로 한다.

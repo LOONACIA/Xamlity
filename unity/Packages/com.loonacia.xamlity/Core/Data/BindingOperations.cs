@@ -11,6 +11,9 @@ namespace Xamlity.Data
             ValidateTarget(target, dp);
             if (binding == null)
                 throw new ArgumentNullException(nameof(binding));
+            if (binding.Mode == BindingMode.TwoWay && (binding.Path == null || binding.Path.Segments.Length == 0))
+                throw new InvalidOperationException("Two-way binding requires a property path.");
+            binding.Seal();
             var expression = new BindingExpression((FrameworkElement)target, dp, binding);
             target.SetExpression(dp, expression);
             return expression;
