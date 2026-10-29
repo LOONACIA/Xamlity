@@ -68,6 +68,12 @@ namespace Xamlity.Tree
                     new Rect(rect.X + Offset.X, rect.Y + Offset.Y, rect.Width, rect.Height));
             }
 
+            public void DrawImage(ImageSource imageSource, Rect rectangle)
+            {
+                Target.DrawImage(imageSource,
+                    new Rect(rectangle.X + Offset.X, rectangle.Y + Offset.Y, rectangle.Width, rectangle.Height));
+            }
+
             public void DrawRoundedRectangle(Brush brush, Rect rectangle, CornerRadius cornerRadius)
             {
                 Target.DrawRoundedRectangle(brush,

@@ -8,6 +8,7 @@ namespace Xamlity.Rendering
         void PushOpacity(double opacity);
         void Pop();
         void DrawRectangle(Brush brush, Rect rect);
+        void DrawImage(ImageSource imageSource, Rect rectangle);
         void DrawRoundedRectangle(Brush brush, Rect rectangle, CornerRadius cornerRadius);
         void DrawRoundedBorder(Brush brush, Rect outerRectangle, CornerRadius outerCornerRadius,
             Rect innerRectangle, CornerRadius innerCornerRadius);

@@ -9,6 +9,7 @@ namespace Xamlity.Core.Tests.Rendering
         public List<(string Method, double Opacity, Brush Brush, Rect Rect, GlyphRun Run, Point BaselineOrigin)>
             Calls { get; } = new List<(string, double, Brush, Rect, GlyphRun, Point)>(16);
         public List<(Brush Brush, Rect Rect)> Rectangles { get; } = new List<(Brush, Rect)>();
+        public List<(ImageSource Source, Rect Rect)> Images { get; } = new List<(ImageSource, Rect)>();
         public List<(Brush Brush, Rect Rect, CornerRadius Radius)> RoundedRectangles { get; } =
             new List<(Brush, Rect, CornerRadius)>();
         public List<(Brush Brush, Rect OuterRect, CornerRadius OuterRadius, Rect InnerRect, CornerRadius InnerRadius)>
@@ -21,6 +22,12 @@ namespace Xamlity.Core.Tests.Rendering
         public void PushOpacity(double opacity) =>
             Calls.Add((nameof(PushOpacity), opacity, null, default, null, default));
         public void Pop() => Calls.Add((nameof(Pop), default, null, default, null, default));
+
+        public void DrawImage(ImageSource imageSource, Rect rectangle)
+        {
+            Calls.Add((nameof(DrawImage), default, null, rectangle, null, default));
+            Images.Add((imageSource, rectangle));
+        }
 
         public void DrawRectangle(Brush brush, Rect rect)
         {

@@ -77,6 +77,10 @@ namespace Xamlity.Unity
             currentClip = null;
         }
 
+        public void DrawImage(ImageSource imageSource, Rect rectangle)
+        {
+        }
+
         public void PushClip(Rect clipRect)
         {
             stateStack.Add(new DrawingState(currentOpacity, currentClip));

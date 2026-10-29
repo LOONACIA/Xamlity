@@ -17,6 +17,10 @@ namespace Xamlity.Core.Tests.Rendering
         {
         }
 
+        public void DrawImage(ImageSource imageSource, Rect rectangle)
+        {
+        }
+
         public void DrawRectangle(Brush brush, Rect rect)
         {
         }
