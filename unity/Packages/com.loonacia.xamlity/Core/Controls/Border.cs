@@ -1,11 +1,13 @@
 using System;
 using Xamlity.Layout;
+using Xamlity.Markup;
 using Xamlity.Properties;
 using Xamlity.Rendering;
 using Xamlity.Tree;
 
 namespace Xamlity.Controls
 {
+    [ContentProperty("Child")]
     public class Border : FrameworkElement
     {
         public static readonly DependencyProperty BackgroundProperty = DependencyProperty.Register(

@@ -1,7 +1,9 @@
+using Xamlity.Markup;
 using Xamlity.Tree;
 
 namespace Xamlity.Layout
 {
+    [ContentProperty("Children")]
     public abstract class Panel : FrameworkElement
     {
         protected Panel()
