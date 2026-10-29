@@ -6,7 +6,7 @@ namespace Xamlity.Markup
 {
     public static class XamlIrSerializer
     {
-        private const int FormatVersion = 1;
+        private const int FormatVersion = 2;
         private static readonly byte[] Magic = { (byte)'X', (byte)'A', (byte)'I', (byte)'R' };
 
         public static byte[] Serialize(XamlDocument document)
@@ -65,6 +65,7 @@ namespace Xamlity.Markup
             foreach (XamlPropertyNode property in node.Properties)
             {
                 WriteString(writer, property.PropertyName);
+                WriteString(writer, property.OwnerTypeName);
                 writer.Write(property.Line);
                 writer.Write(property.Column);
                 WriteString(writer, property.TextValue);
@@ -86,7 +87,7 @@ namespace Xamlity.Markup
             {
                 var property = new XamlPropertyNode
                 {
-                    PropertyName = ReadString(reader), Line = reader.ReadInt32(),
+                    PropertyName = ReadString(reader), OwnerTypeName = ReadString(reader), Line = reader.ReadInt32(),
                     Column = reader.ReadInt32(), TextValue = ReadString(reader)
                 };
                 int objectCount = ReadCount(reader);

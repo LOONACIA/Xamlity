@@ -23,6 +23,7 @@ namespace Xamlity.Properties
         public Type PropertyType { get; }
         public Type OwnerType { get; }
         public PropertyMetadata DefaultMetadata { get; }
+        internal bool IsAttached { get; private set; }
 
         internal bool Inherits => DefaultMetadata is FrameworkPropertyMetadata metadata && metadata.Inherits;
         internal static IReadOnlyList<DependencyProperty> RegisteredInheritedProperties => InheritedProperties;
@@ -53,6 +54,14 @@ namespace Xamlity.Properties
             Registry.Add((ownerType, name), property);
             if (property.Inherits)
                 InheritedProperties.Add(property);
+            return property;
+        }
+
+        public static DependencyProperty RegisterAttached(string name, Type propertyType, Type ownerType,
+            PropertyMetadata defaultMetadata = null)
+        {
+            DependencyProperty property = Register(name, propertyType, ownerType, defaultMetadata);
+            property.IsAttached = true;
             return property;
         }
 

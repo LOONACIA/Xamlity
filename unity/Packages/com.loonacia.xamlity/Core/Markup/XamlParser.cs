@@ -149,8 +149,13 @@ namespace Xamlity.Markup
                         Error($"Attached property elements are not supported: '{name}'.");
                     else
                     {
-                        propertyType = XamlTypeResolver.ResolveProperty(ownerType, propertyName, out _, allowCollections: true);
-                        if (propertyType == null)
+                        propertyType = XamlTypeResolver.ResolveProperty(ownerType, propertyName, out DependencyProperty dp, allowCollections: true);
+                        if (dp != null && dp.IsAttached)
+                        {
+                            Error($"Attached property elements are not supported: '{name}'.");
+                            propertyType = null;
+                        }
+                        else if (propertyType == null)
                             Error($"Unknown or read-only property '{propertyName}' on type '{ownerType.Name}'.");
                         if (!assigned.Add(propertyName))
                             Error($"Property '{propertyName}' is set more than once.");
@@ -215,12 +220,31 @@ namespace Xamlity.Markup
                         Error($"XML namespace '{reader.NamespaceURI}' is not supported.");
                         continue;
                     }
-                    if (name.Contains("."))
+                    Type attachedOwner = null;
+                    bool qualified = name.Contains(".");
+                    if (qualified)
                     {
-                        Error($"Attached properties are not supported: '{name}'.");
-                        continue;
+                        int separator = name.IndexOf('.');
+                        if (separator == 0 || separator == name.Length - 1 || separator != name.LastIndexOf('.'))
+                        {
+                            Error($"Invalid property name '{name}'; expected 'Owner.Property'.");
+                            continue;
+                        }
+                        string ownerName = name.Substring(0, separator);
+                        Type owner = XamlTypeResolver.Resolve(XamlTypeResolver.DefaultNamespace, ownerName,
+                            requireConstructor: false);
+                        if (owner == null)
+                        {
+                            Error($"Unknown type '{ownerName}'.");
+                            continue;
+                        }
+                        name = name.Substring(separator + 1);
+                        if (type != null && !owner.IsAssignableFrom(type))
+                            attachedOwner = owner;
                     }
-                    if (!assigned.Add(name))
+                    string ownerTypeName = attachedOwner == null ? null :
+                        $"{attachedOwner.FullName}, {attachedOwner.Assembly.GetName().Name}";
+                    if (!assigned.Add(attachedOwner == null ? name : ownerTypeName + "." + name))
                         Error($"Property '{name}' is set more than once.");
                     if (xName)
                     {
@@ -233,12 +257,34 @@ namespace Xamlity.Markup
                     }
                     if (type == null)
                         continue;
-                    Type propertyType = XamlTypeResolver.ResolveProperty(type, name, out DependencyProperty dp);
+                    DependencyProperty dp;
+                    Type propertyType;
+                    if (attachedOwner != null)
+                    {
+                        dp = XamlTypeResolver.ResolveDependencyProperty(attachedOwner, name);
+                        if (dp == null || !dp.IsAttached)
+                        {
+                            Error($"Unknown attached property '{name}' on type '{attachedOwner.Name}'.");
+                            continue;
+                        }
+                        if (!typeof(DependencyObject).IsAssignableFrom(type))
+                        {
+                            Error($"Attached properties require a DependencyObject, not '{type.Name}'.");
+                            continue;
+                        }
+                        propertyType = dp.PropertyType;
+                    }
+                    else
+                    {
+                        propertyType = XamlTypeResolver.ResolveProperty(type, name, out dp);
+                        if (!qualified && dp != null && dp.IsAttached)
+                            propertyType = null;
+                    }
                     if (propertyType == null)
                         Error($"Unknown or read-only property '{name}' on type '{type.Name}'.");
                     else if (!XamlValueConverter.TryConvert(reader.Value, propertyType, dp, out _, out string error))
                         Error($"Property '{name}': {error}");
-                    node.Properties.Add(new XamlPropertyNode { PropertyName = name, TextValue = reader.Value,
+                    node.Properties.Add(new XamlPropertyNode { PropertyName = name, OwnerTypeName = ownerTypeName, TextValue = reader.Value,
                         Line = location.LineNumber, Column = location.LinePosition });
                 }
                 reader.MoveToElement();

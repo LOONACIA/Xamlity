@@ -19,6 +19,7 @@ namespace Xamlity.Markup
     public sealed class XamlPropertyNode
     {
         public string PropertyName { get; set; }
+        public string OwnerTypeName { get; set; }
         public int Line { get; set; }
         public int Column { get; set; }
         public string TextValue { get; set; }

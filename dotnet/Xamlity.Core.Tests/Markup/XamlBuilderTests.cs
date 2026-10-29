@@ -47,7 +47,7 @@ namespace Xamlity.Core.Tests.Markup
         }
 
         [Test]
-        public void SerializationUsesVersionOneFieldLayout()
+        public void SerializationUsesVersionTwoFieldLayout()
         {
             var document = new XamlDocument
             {
@@ -59,14 +59,74 @@ namespace Xamlity.Core.Tests.Markup
             });
             byte[] expected =
             {
-                88, 65, 73, 82, 1, 0, 0, 0, // XAIR, version 1
+                88, 65, 73, 82, 2, 0, 0, 0, // XAIR, version 2
                 1, 1, 84, 1, 0, // TypeName, empty Name
                 2, 0, 0, 0, 3, 0, 0, 0, 1, 0, 0, 0, // Line, Column, property count
-                1, 1, 80, 4, 0, 0, 0, 5, 0, 0, 0, // PropertyName, Line, Column
+                1, 1, 80, 0, 4, 0, 0, 0, 5, 0, 0, 0, // PropertyName, null OwnerTypeName, Line, Column
                 1, 3, 0xED, 0x95, 0x9C, 0, 0, 0, 0 // TextValue, object count
             };
             Assert.That(XamlIrSerializer.Serialize(document), Is.EqualTo(expected));
             AssertObjectEqual(document.Root, XamlIrSerializer.Deserialize(expected).Root);
+        }
+
+        [Test]
+        public void AttachedPropertiesRoundTripBuildAndPositionChildren()
+        {
+            XamlDocument original = Parse("<Canvas " + Namespaces + ">\n" +
+                "  <Border Canvas.Left=\"10\" Canvas.Top=\"20\" Width=\"30\" Height=\"40\"/>\n</Canvas>");
+            XamlDocument restored = XamlIrSerializer.Deserialize(XamlIrSerializer.Serialize(original));
+            AssertObjectEqual(original.Root, restored.Root);
+            XamlObjectNode childNode = restored.Root.Properties.Single().Objects.Single();
+            Assert.That(childNode.Properties.Take(2).Select(p => p.OwnerTypeName),
+                Is.EqualTo(new[] { "Xamlity.Layout.Canvas, Xamlity.Core", "Xamlity.Layout.Canvas, Xamlity.Core" }));
+            Assert.That(childNode.Properties.Skip(2).Select(p => p.OwnerTypeName), Is.All.Null);
+            var canvas = (Canvas)XamlBuilder.Build(restored);
+            var root = new UIRoot(canvas);
+            root.UpdateLayout(new Size(200, 100));
+            var child = (Border)canvas.Children.Single();
+            Assert.That(child.VisualOffset, Is.EqualTo(new Point(10, 20)));
+            Assert.That(child.RenderSize, Is.EqualTo(new Size(30, 40)));
+            Assert.That(Canvas.GetLeft(child), Is.EqualTo(10));
+            Assert.That(Canvas.GetTop(child), Is.EqualTo(20));
+            child.Background = new SolidColorBrush(Color.FromRgb(255, 0, 0));
+            var context = new RecordingDrawingContext();
+            root.Render(context);
+            Assert.That(context.Rectangles.Single().Rect, Is.EqualTo(new Rect(10, 20, 30, 40)));
+        }
+
+        [Test]
+        public void BuilderInitializesAttachedOwnerBeforeLookingUpTheProperty()
+        {
+            var document = new XamlDocument { Root = new XamlObjectNode { TypeName = typeof(Border).AssemblyQualifiedName } };
+            document.Root.Properties.Add(new XamlPropertyNode
+            {
+                PropertyName = "Offset", OwnerTypeName = typeof(UninitializedAttachedOwner).AssemblyQualifiedName,
+                TextValue = "12.5"
+            });
+            var border = (Border)XamlBuilder.Build(document);
+            Assert.That(border.GetValue(UninitializedAttachedOwner.OffsetProperty), Is.EqualTo(12.5));
+        }
+
+        private static class UninitializedAttachedOwner
+        {
+            internal static readonly DependencyProperty OffsetProperty;
+
+            static UninitializedAttachedOwner()
+            {
+                OffsetProperty = DependencyProperty.RegisterAttached("Offset", typeof(double), typeof(UninitializedAttachedOwner));
+            }
+        }
+
+        [TestCase("Missing")]
+        [TestCase("Width")]
+        public void BuilderRejectsMissingOrOrdinaryPropertiesOnAttachedOwners(string name)
+        {
+            XamlDocument document = DocumentFor(typeof(Border));
+            XamlPropertyNode property = Property(name, "10");
+            property.OwnerTypeName = typeof(Canvas).AssemblyQualifiedName;
+            document.Root.Properties.Add(property);
+            var exception = AssertBuildError(document, 12, 8);
+            Assert.That(exception.Message, Does.Contain($"Unknown attached property '{name}' on type 'Canvas'."));
         }
 
         [Test]
@@ -76,11 +136,12 @@ namespace Xamlity.Core.Tests.Markup
             data[0] = (byte)'Y';
             var exception = Assert.Throws<InvalidDataException>(() => XamlIrSerializer.Deserialize(data));
             Assert.That(exception.Message, Does.Contain("magic").And.Contain("XAIR")
-                .And.Contain("Expected version 1").And.Contain("actual version 1"));
+                .And.Contain("Expected version 2").And.Contain("actual version 2"));
         }
 
         [TestCase(0)]
-        [TestCase(2)]
+        [TestCase(1)]
+        [TestCase(3)]
         [TestCase(-1)]
         public void RejectsWrongVersion(int version)
         {
@@ -91,7 +152,7 @@ namespace Xamlity.Core.Tests.Markup
                 writer.Write(version);
             }
             var exception = Assert.Throws<InvalidDataException>(() => XamlIrSerializer.Deserialize(data));
-            Assert.That(exception.Message, Does.Contain("Expected version 1").And.Contain("actual version " + version));
+            Assert.That(exception.Message, Does.Contain("Expected version 2").And.Contain("actual version " + version));
         }
 
         [Test]
@@ -103,8 +164,8 @@ namespace Xamlity.Core.Tests.Markup
                 byte[] truncated = data.Take(length).ToArray();
                 var exception = Assert.Throws<InvalidDataException>(() => XamlIrSerializer.Deserialize(truncated),
                     "Truncated at byte " + length);
-                Assert.That(exception.Message, Does.Contain("Expected version 1")
-                    .And.Contain(length < 8 ? "actual version unavailable" : "actual version 1"));
+                Assert.That(exception.Message, Does.Contain("Expected version 2")
+                    .And.Contain(length < 8 ? "actual version unavailable" : "actual version 2"));
             }
         }
 
@@ -366,6 +427,7 @@ namespace Xamlity.Core.Tests.Markup
                 XamlPropertyNode expectedProperty = expected.Properties[index];
                 XamlPropertyNode actualProperty = actual.Properties[index];
                 Assert.That(actualProperty.PropertyName, Is.EqualTo(expectedProperty.PropertyName));
+                Assert.That(actualProperty.OwnerTypeName, Is.EqualTo(expectedProperty.OwnerTypeName));
                 Assert.That(actualProperty.Line, Is.EqualTo(expectedProperty.Line));
                 Assert.That(actualProperty.Column, Is.EqualTo(expectedProperty.Column));
                 Assert.That(actualProperty.TextValue, Is.EqualTo(expectedProperty.TextValue));

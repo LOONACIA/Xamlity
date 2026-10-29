@@ -100,6 +100,85 @@ namespace Xamlity.Core.Tests.Markup
                 2, 2, "XML namespace '" + xmlNamespace + "' is not supported.");
         }
 
+        [TestCase("Border", "Border")]
+        [TestCase("Border", "FrameworkElement")]
+        [TestCase("Canvas", "Panel")]
+        public void QualifiedOrdinaryPropertiesAreNormalized(string element, string owner)
+        {
+            var result = XamlParser.Parse("<" + element + " " + Namespaces + "\n  " + owner + ".Width=\"1\" />", "view.xaml");
+            Assert.That(result.Errors, Is.Empty);
+            XamlPropertyNode property = result.Document.Root.Properties.Single();
+            Assert.That(property.PropertyName, Is.EqualTo("Width"));
+            Assert.That(property.OwnerTypeName, Is.Null);
+            AssertLocation(property.Line, property.Column, 2, 3);
+            Assert.That(((FrameworkElement)XamlBuilder.Build(result.Document)).Width, Is.EqualTo(1));
+        }
+
+        [TestCase("Canvas.Left=\"10\"", "Left", "10")]
+        [TestCase("Canvas.Top=\"20\"", "Top", "20")]
+        public void ResolvesAttachedOwnerWithoutAnOwnerObject(string attribute, string name, string value)
+        {
+            var result = XamlParser.Parse("<Border " + Namespaces + "\n  " + attribute + " />", "view.xaml");
+            Assert.That(result.Errors, Is.Empty);
+            XamlPropertyNode property = result.Document.Root.Properties.Single();
+            Assert.That(property.PropertyName, Is.EqualTo(name));
+            Assert.That(property.OwnerTypeName, Is.EqualTo("Xamlity.Layout.Canvas, Xamlity.Core"));
+            Assert.That(property.TextValue, Is.EqualTo(value));
+            AssertLocation(property.Line, property.Column, 2, 3);
+        }
+
+        [Test]
+        public void RejectsUnqualifiedAttachedPropertyOnOwner()
+        {
+            AssertError(XamlParser.Parse("<Canvas " + Namespaces + "\n  Left=\"5\" />", "view.xaml"),
+                2, 3, "Unknown or read-only property 'Left' on type 'Canvas'.");
+        }
+
+        [Test]
+        public void QualifiedPropertyOnItsOwnOwnerUsesOrdinaryIr()
+        {
+            var result = XamlParser.Parse("<Canvas " + Namespaces + " Canvas.Left=\"5\" />", "view.xaml");
+            Assert.That(result.Errors, Is.Empty);
+            Assert.That(result.Document.Root.Properties.Single().OwnerTypeName, Is.Null);
+            Assert.That(Canvas.GetLeft((Canvas)XamlBuilder.Build(result.Document)), Is.EqualTo(5));
+        }
+
+        [Test]
+        public void RejectsAttachedPropertyElementsEvenOnTheirOwner()
+        {
+            AssertError(XamlParser.Parse("<Canvas " + Namespaces + ">\n  <Canvas.Left />\n</Canvas>", "view.xaml"),
+                2, 4, "Attached property elements are not supported: 'Canvas.Left'.");
+        }
+
+        [Test]
+        public void RejectsAttachedPropertiesOnNonDependencyObjects()
+        {
+            AssertError(XamlParser.Parse("<Border " + Namespaces + "><Border.Background>\n" +
+                "  <SolidColorBrush\n    Canvas.Left=\"5\" /></Border.Background></Border>", "view.xaml"),
+                3, 5, "Attached properties require a DependencyObject, not 'SolidColorBrush'.");
+        }
+
+        [Test]
+        public void QualifiedAndUnqualifiedOrdinaryPropertiesCannotBothBeAssigned()
+        {
+            AssertError(XamlParser.Parse("<Border " + Namespaces + " Width=\"1\"\n  Border.Width=\"2\" />", "view.xaml"),
+                2, 3, "Property 'Width' is set more than once.");
+        }
+
+        [Test]
+        public void AttachedPropertyAliasesCannotBothBeAssigned()
+        {
+            AssertError(XamlParser.Parse("<Border " + Namespaces + " xmlns:ui=\"https://github.com/loonacia/xamlity\"" +
+                " Canvas.Left=\"1\"\n  ui:Canvas.Left=\"2\" />", "view.xaml"), 2, 3, "Property 'Left' is set more than once.");
+        }
+
+        [TestCase("Canvas.Missing=\"1\"", "Unknown attached property 'Missing' on type 'Canvas'.")]
+        [TestCase("StackPanel.Orientation=\"Horizontal\"", "Unknown attached property 'Orientation' on type 'StackPanel'.")]
+        [TestCase("Canvas.Width=\"1\"", "Unknown attached property 'Width' on type 'Canvas'.")]
+        [TestCase("Canvas.Left.Extra=\"1\"", "Invalid property name 'Canvas.Left.Extra'; expected 'Owner.Property'.")]
+        [TestCase("Canvas.=\"1\"", "Invalid property name 'Canvas.'; expected 'Owner.Property'.")]
+        [TestCase("Canvas.Left=\"wrong\"", "Property 'Left': 'wrong' is not a valid Double value.")]
+        [TestCase("Canvas.Left=\"{Binding X}\"", "Property 'Left': Markup extensions are not supported.")]
         [TestCase("x:Class=\"View\"", "XAML directive 'x:Class' is not supported.")]
         [TestCase("x:Key=\"key\"", "XAML directive 'x:Key' is not supported.")]
         [TestCase("x:Type=\"Border\"", "XAML directive 'x:Type' is not supported.")]
@@ -107,8 +186,7 @@ namespace Xamlity.Core.Tests.Markup
         [TestCase("Unknown=\"1\"", "Unknown or read-only property 'Unknown' on type 'Border'.")]
         [TestCase("IsMeasureValid=\"true\"", "Unknown or read-only property 'IsMeasureValid' on type 'Border'.")]
         [TestCase("RenderSize=\"1\"", "Unknown or read-only property 'RenderSize' on type 'Border'.")]
-        [TestCase("Grid.Row=\"1\"", "Attached properties are not supported: 'Grid.Row'.")]
-        [TestCase("Border.Width=\"1\"", "Attached properties are not supported: 'Border.Width'.")]
+        [TestCase("Grid.Row=\"1\"", "Unknown type 'Grid'.")]
         [TestCase("Width=\"12px\"", "Property 'Width': '12px' is not a valid Double value.")]
         [TestCase("MinWidth=\"Auto\"", "Property 'MinWidth': 'Auto' is not a valid Double value.")]
         [TestCase("Child=\"TextBlock\"", "Property 'Child': Cannot convert text to type 'Xamlity.Tree.UIElement'.")]

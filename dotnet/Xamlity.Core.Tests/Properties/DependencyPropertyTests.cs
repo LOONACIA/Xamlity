@@ -8,6 +8,41 @@ namespace Xamlity.Core.Tests.Properties
     public class DependencyPropertyTests
     {
         [Test]
+        public void AttachedRegistrationSupportsUnrelatedObjectsAndSharesTheRegistry()
+        {
+            string name = Guid.NewGuid().ToString();
+            var metadata = new PropertyMetadata(5);
+            var property = DependencyProperty.RegisterAttached(name, typeof(int), typeof(UnrelatedOwner), metadata);
+            Assert.That(property.IsAttached, Is.True);
+            Assert.That(property.DefaultMetadata, Is.SameAs(metadata));
+            Assert.That(DependencyProperty.FromName(typeof(UnrelatedOwner), name), Is.SameAs(property));
+            var target = new DependencyObject();
+            Assert.That(target.GetValue(property), Is.EqualTo(5));
+            target.SetValue(property, 12);
+            Assert.That(target.GetValue(property), Is.EqualTo(12));
+            target.ClearValue(property);
+            Assert.That(target.GetValue(property), Is.EqualTo(5));
+            Assert.Throws<ArgumentException>(() => DependencyProperty.RegisterAttached(name, typeof(int), typeof(UnrelatedOwner)));
+            Assert.Throws<ArgumentException>(() => DependencyProperty.Register(name, typeof(int), typeof(UnrelatedOwner)));
+            var ordinary = DependencyProperty.Register(name, typeof(int), typeof(Node));
+            Assert.That(ordinary.IsAttached, Is.False);
+            Assert.Throws<ArgumentException>(() => DependencyProperty.RegisterAttached(name, typeof(int), typeof(Node)));
+        }
+
+        [Test]
+        public void AttachedRegistrationUsesTheSameValidationAndDefaultValues()
+        {
+            string name = Guid.NewGuid().ToString();
+            Assert.Throws<ArgumentException>(() => DependencyProperty.RegisterAttached(null, typeof(int), typeof(Node)));
+            Assert.Throws<ArgumentException>(() => DependencyProperty.RegisterAttached("", typeof(int), typeof(Node)));
+            Assert.Throws<ArgumentNullException>(() => DependencyProperty.RegisterAttached(name, null, typeof(Node)));
+            Assert.Throws<ArgumentNullException>(() => DependencyProperty.RegisterAttached(name, typeof(int), null));
+            Assert.Throws<ArgumentException>(() => DependencyProperty.RegisterAttached(name, typeof(int), typeof(Node), new PropertyMetadata("wrong")));
+            Assert.That(DependencyProperty.RegisterAttached(name, typeof(int), typeof(Node)).DefaultMetadata.DefaultValue, Is.EqualTo(0));
+            Assert.That(DependencyProperty.RegisterAttached(name, typeof(string), typeof(UnrelatedOwner)).DefaultMetadata.DefaultValue, Is.Null);
+        }
+
+        [Test]
         public void RegistrationPreservesIdentityAndMetadata()
         {
             PropertyChangedCallback callback = (d, e) => { };

@@ -24,11 +24,7 @@ namespace Xamlity.Markup
         {
             try
             {
-                if (!Types.TryGetValue(node.TypeName, out Type type))
-                {
-                    type = Type.GetType(node.TypeName, throwOnError: true);
-                    Types.Add(node.TypeName, type);
-                }
+                Type type = GetType(node.TypeName);
                 object instance = Activator.CreateInstance(type);
                 if (node.Name != null)
                     ((FrameworkElement)instance).Name = node.Name;
@@ -51,8 +47,19 @@ namespace Xamlity.Markup
         {
             try
             {
-                Type propertyType = XamlTypeResolver.ResolveProperty(type, node.PropertyName,
-                    out DependencyProperty dp, allowCollections: node.TextValue == null);
+                DependencyProperty dp;
+                Type propertyType;
+                if (node.OwnerTypeName != null)
+                {
+                    Type owner = GetType(node.OwnerTypeName);
+                    dp = XamlTypeResolver.ResolveDependencyProperty(owner, node.PropertyName);
+                    if (dp == null || !dp.IsAttached)
+                        throw new InvalidOperationException($"Unknown attached property '{node.PropertyName}' on type '{owner.Name}'.");
+                    propertyType = dp.PropertyType;
+                }
+                else
+                    propertyType = XamlTypeResolver.ResolveProperty(type, node.PropertyName,
+                        out dp, allowCollections: node.TextValue == null);
                 if (propertyType == null)
                     throw new InvalidOperationException($"Unknown or read-only property '{node.PropertyName}'.");
                 if (node.TextValue != null)
@@ -99,6 +106,16 @@ namespace Xamlity.Markup
                 throw new XamlBuildException(node.Line, node.Column,
                     $"Cannot set property '{node.PropertyName}': {exception.Message}", exception);
             }
+        }
+
+        private static Type GetType(string name)
+        {
+            if (!Types.TryGetValue(name, out Type type))
+            {
+                type = Type.GetType(name, throwOnError: true);
+                Types.Add(name, type);
+            }
+            return type;
         }
 
         private static PropertyInfo GetProperty(Type type, string name)

@@ -7,7 +7,7 @@ using Xamlity.Unity;
 
 namespace Xamlity.Editor
 {
-    [ScriptedImporter(1, "xaml")]
+    [ScriptedImporter(2, "xaml")]
     public sealed class XamlImporter : ScriptedImporter
     {
         public override void OnImportAsset(AssetImportContext ctx)

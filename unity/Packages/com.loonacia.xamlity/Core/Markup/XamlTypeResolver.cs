@@ -12,7 +12,7 @@ namespace Xamlity.Markup
         internal const string DefaultNamespace = "https://github.com/loonacia/xamlity";
         internal const string XamlNamespace = "http://schemas.microsoft.com/winfx/2006/xaml";
 
-        internal static Type Resolve(string xmlNamespace, string name)
+        internal static Type Resolve(string xmlNamespace, string name, bool requireConstructor = true)
         {
             if (xmlNamespace != DefaultNamespace)
                 return null;
@@ -20,19 +20,17 @@ namespace Xamlity.Markup
             Assembly assembly = typeof(UIElement).Assembly;
             Type type = assembly.GetType("Xamlity.Controls." + name)
                 ?? assembly.GetType("Xamlity.Layout." + name)
-                ?? assembly.GetType("Xamlity.Rendering." + name);
-            return type != null && type.IsPublic && type.IsClass && !type.IsAbstract &&
-                type.GetConstructor(Type.EmptyTypes) != null
+                ?? assembly.GetType("Xamlity.Rendering." + name)
+                ?? (requireConstructor ? null : assembly.GetType("Xamlity.Tree." + name));
+            return type != null && type.IsPublic && type.IsClass && (!requireConstructor ||
+                (!type.IsAbstract && type.GetConstructor(Type.EmptyTypes) != null))
                 ? type : null;
         }
 
         internal static Type ResolveProperty(Type type, string name, out DependencyProperty dp,
             bool allowCollections = false)
         {
-            // Reflection alone does not run the initializers that register dependency properties.
-            for (Type current = type; current != null; current = current.BaseType)
-                RuntimeHelpers.RunClassConstructor(current.TypeHandle);
-            dp = DependencyProperty.FromName(type, name);
+            dp = ResolveDependencyProperty(type, name);
             if (dp != null)
                 return dp.PropertyType;
 
@@ -41,6 +39,14 @@ namespace Xamlity.Markup
                 ((property.SetMethod != null && property.SetMethod.IsPublic) ||
                 (allowCollections && property.GetMethod != null && property.GetMethod.IsPublic &&
                     GetCollectionInterface(property.PropertyType) != null)) ? property.PropertyType : null;
+        }
+
+        internal static DependencyProperty ResolveDependencyProperty(Type type, string name)
+        {
+            // Reflection alone does not run the initializers that register dependency properties.
+            for (Type current = type; current != null; current = current.BaseType)
+                RuntimeHelpers.RunClassConstructor(current.TypeHandle);
+            return DependencyProperty.FromName(type, name);
         }
 
         internal static Type GetCollectionInterface(Type type)
