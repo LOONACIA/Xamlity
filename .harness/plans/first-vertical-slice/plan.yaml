@@ -578,3 +578,38 @@ steps:
     ac:
       - dotnet test dotnet/Xamlity.Core.Tests
       - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s14-unity-linear-color
+    title: convert sRGB vertex colors to linear in Linear color space projects
+    type: fix
+    scope: unity
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: unity/Packages/com.loonacia.xamlity/Runtime/Shaders/XamlitySolid.shader, XamlityText.shader,
+      Runtime/MeshDrawingContext.cs (색이 Color32로 정점에 들어가는 곳), Tests/Editor/RenderingTests.cs (픽셀 테스트 방식),
+      unity/ProjectSettings/ProjectSettings.asset의 `m_ActiveColorSpace` (1 = Linear).
+
+      버그: XAML 색(SolidColorBrush.Color)은 WPF처럼 sRGB 값인데, 지금은 Color32 그대로 정점 색에 넣고 셰이더가 그대로 출력한다.
+      Linear 색 공간 프로젝트에서는 출력이 sRGB 타깃에 쓰일 때 linear → sRGB 인코딩이 한 번 더 일어나 색이 밝게 바랜다.
+      SampleScene에서 Background="#243447"이 화면에서 (105,125,144)로 측정됐다. 0과 255만 쓰는 빨강·검정·흰색 테스트로는 드러나지 않았다.
+
+      수정: 두 셰이더의 정점 셰이더에서 `UNITY_COLORSPACE_GAMMA`가 정의되지 않았을 때만 정점 색 rgb를 sRGB → linear로 바꾼다
+      (`Packages/com.unity.render-pipelines.core/ShaderLibrary/Color.hlsl`의 `SRGBToLinear`, URP Core.hlsl은 이 파일을 포함하지 않으므로 직접 include).
+      알파는 바꾸지 마라. 이유: 알파는 색 공간과 무관한 불투명도다. 정점 데이터는 Color32 그대로 둔다. 이유: float 색으로 바꾸면 정점 메모리가 늘고,
+      CPU에서 linear 바이트로 바꾸면 어두운 색이 양자화되어 띠가 생긴다. C# 쪽(MeshDrawingContext 등)에서 색 공간 분기를 만들지 마라.
+      반투명 색의 블렌딩이 WPF(sRGB 공간 블렌딩)와 조금 다른 것은 이 스텝에서 다루지 않는다.
+
+      테스트(RenderingTests.cs에 추가):
+      - Solid 픽셀 테스트: TopBand.xaml로 만든 루트의 Border Background를 코드에서 `#808080`으로 바꾸고 Refresh(256,128) → 렌더 → ReadPixels.
+        띠 안 픽셀이 (128,128,128)과 채널별 2/255 이내. 테스트용 RenderTexture는 기존 테스트와 같은 설정(Linear 프로젝트에서 sRGB 타깃)을 쓴다.
+        테스트 시작 시 `QualitySettings.activeColorSpace`가 Linear임을 Assert로 확인한다(Gamma 프로젝트에서는 의미가 다른 테스트이므로 명확한 메시지로 실패).
+      - Text 픽셀 테스트: KoreanText.xaml 루트의 TextBlock Foreground를 `#808080`으로 바꿔 렌더한다. RenderSize 영역 안 픽셀 중 R 최댓값이
+        128과 3/255 이내(글자 획 안쪽은 커버리지 1이므로 정확히 그 색이어야 한다. 수정 전에는 약 188이 나온다).
+      기존 테스트(빨강 띠, 등록 순서 블렌딩, 한글 픽셀, 할당 0)는 기대값을 바꾸지 않고 그대로 통과해야 한다.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Runtime/Shaders/XamlitySolid.shader
+      - unity/Packages/com.loonacia.xamlity/Runtime/Shaders/XamlityText.shader
+      - unity/Packages/com.loonacia.xamlity/Tests/Editor/RenderingTests.cs
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
