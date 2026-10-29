@@ -85,7 +85,7 @@ namespace Xamlity.Editor.Tests
             var origin = new Point(11, 70);
             mesh = new Mesh();
             var context = new MeshDrawingContext();
-            context.Begin(128);
+            context.Begin(128, 1);
             context.DrawGlyphRun(brush, run, origin);
             context.Upload(mesh);
 
@@ -132,7 +132,7 @@ namespace Xamlity.Editor.Tests
             var brush = new SolidColorBrush(CoreColor.FromRgb(255, 255, 255));
             mesh = new Mesh();
             var context = new MeshDrawingContext();
-            context.Begin(128);
+            context.Begin(128, 1);
             context.DrawRectangle(brush, new Rect(0, 0, 100, 100));
             context.DrawGlyphRun(brush, run, new Point(0, 60));
             context.DrawGlyphRun(brush, run, new Point(0, 120));
@@ -148,7 +148,7 @@ namespace Xamlity.Editor.Tests
             Assert.That(mesh.GetIndices(1)[0], Is.EqualTo(4));
             Assert.That(mesh.GetIndices(2), Is.EqualTo(new[] { 20, 21, 22, 20, 22, 23 }));
 
-            context.Begin(128);
+            context.Begin(128, 1);
             context.DrawGlyphRun(brush, run, new Point(0, 60));
             context.Upload(mesh);
             Assert.That(mesh.subMeshCount, Is.EqualTo(1));
@@ -246,7 +246,7 @@ namespace Xamlity.Editor.Tests
         {
             mesh = new Mesh();
             var context = new MeshDrawingContext();
-            context.Begin(128);
+            context.Begin(128, 1);
             context.DrawRectangle(new SolidColorBrush(CoreColor.FromArgb(128, 10, 20, 30)),
                 new Rect(5, 8, 20, 40));
             context.Upload(mesh);
@@ -265,7 +265,7 @@ namespace Xamlity.Editor.Tests
         {
             mesh = new Mesh();
             var context = new MeshDrawingContext();
-            context.Begin(128);
+            context.Begin(128, 1);
             context.PushClip(new Rect(10, 16, 10, 20));
             context.DrawRectangle(new SolidColorBrush(CoreColor.FromArgb(128, 10, 20, 30)),
                 new Rect(5, 8, 20, 40));
@@ -292,7 +292,7 @@ namespace Xamlity.Editor.Tests
         {
             mesh = new Mesh();
             var context = new MeshDrawingContext();
-            context.Begin(128);
+            context.Begin(128, 1);
             context.PushClip(new Rect(x, y, width, height));
             context.DrawRectangle(new SolidColorBrush(CoreColor.FromRgb(255, 0, 0)), new Rect(0, 0, 10, 10));
             context.Upload(mesh);
@@ -309,7 +309,7 @@ namespace Xamlity.Editor.Tests
             var context = new MeshDrawingContext();
             var brush = new SolidColorBrush(CoreColor.FromRgb(255, 0, 0));
             var rect = new Rect(0, 0, 100, 100);
-            context.Begin(128);
+            context.Begin(128, 1);
             context.PushClip(new Rect(10, 20, 50, 50));
             context.PushOpacity(0.5);
             context.PushClip(new Rect(30, 10, 50, 40));
@@ -358,7 +358,7 @@ namespace Xamlity.Editor.Tests
             var origin = new Point(10, 70);
             mesh = new Mesh();
             var context = new MeshDrawingContext();
-            context.Begin(128);
+            context.Begin(128, 1);
             context.DrawGlyphRun(brush, run, origin);
             context.Upload(mesh);
             var originalVertices = mesh.vertices;
@@ -367,7 +367,7 @@ namespace Xamlity.Editor.Tests
             float right = Mathf.Lerp(originalVertices[0].x, originalVertices[2].x, 0.75f);
             float top = Mathf.Lerp(originalVertices[0].y, originalVertices[2].y, 0.2f);
             float bottom = Mathf.Lerp(originalVertices[0].y, originalVertices[2].y, 0.6f);
-            context.Begin(128);
+            context.Begin(128, 1);
             context.PushClip(new Rect(left, 128 - top, right - left, top - bottom));
             context.DrawGlyphRun(brush, run, origin);
             context.Pop();
@@ -400,7 +400,7 @@ namespace Xamlity.Editor.Tests
             var brush = new SolidColorBrush(CoreColor.FromRgb(255, 255, 255));
             mesh = new Mesh();
             var context = new MeshDrawingContext();
-            context.Begin(128);
+            context.Begin(128, 1);
             context.PushClip(new Rect(1000, 1000, 10, 10));
             context.DrawGlyphRun(brush, run, new Point(0, 60));
             context.Upload(mesh);
@@ -424,10 +424,10 @@ namespace Xamlity.Editor.Tests
         {
             mesh = new Mesh();
             var context = new MeshDrawingContext();
-            context.Begin(128);
+            context.Begin(128, 1);
             context.PushOpacity(0.5);
             context.PushClip(new Rect(0, 0, 1, 1));
-            context.Begin(128);
+            context.Begin(128, 1);
             context.DrawRectangle(new SolidColorBrush(CoreColor.FromRgb(255, 0, 0)), new Rect(0, 0, 10, 10));
             context.Upload(mesh);
 
@@ -477,7 +477,7 @@ namespace Xamlity.Editor.Tests
             var context = new MeshDrawingContext();
             var brush = new SolidColorBrush(CoreColor.FromRgb(10, 20, 30));
             var rect = new Rect(0, 0, 10, 10);
-            context.Begin(128);
+            context.Begin(128, 1);
             context.DrawRectangle(brush, rect);
             context.PushOpacity(0.5);
             context.DrawRectangle(brush, rect);
@@ -508,7 +508,7 @@ namespace Xamlity.Editor.Tests
         {
             mesh = new Mesh();
             var context = new MeshDrawingContext();
-            context.Begin(128);
+            context.Begin(128, 1);
             context.PushOpacity(first);
             context.PushOpacity(second);
             context.DrawRectangle(new SolidColorBrush(CoreColor.FromArgb(128, 10, 20, 30)),
@@ -524,10 +524,10 @@ namespace Xamlity.Editor.Tests
             mesh = new Mesh();
             var context = new MeshDrawingContext();
             Assert.Throws<System.InvalidOperationException>(() => context.Pop());
-            context.Begin(128);
+            context.Begin(128, 1);
             context.PushOpacity(0.5);
             context.PushOpacity(0.25);
-            context.Begin(128);
+            context.Begin(128, 1);
             context.DrawRectangle(new SolidColorBrush(CoreColor.FromRgb(10, 20, 30)),
                 new Rect(0, 0, 10, 10));
             context.Upload(mesh);
@@ -543,7 +543,7 @@ namespace Xamlity.Editor.Tests
             var run = MeasureKorean();
             mesh = new Mesh();
             var context = new MeshDrawingContext();
-            context.Begin(128);
+            context.Begin(128, 1);
             context.PushOpacity(0.5);
             context.DrawGlyphRun(new SolidColorBrush(CoreColor.FromArgb(128, 10, 20, 30)), run, new Point(0, 60));
             context.Pop();
@@ -600,7 +600,7 @@ namespace Xamlity.Editor.Tests
         {
             mesh = new Mesh();
             var context = new MeshDrawingContext();
-            context.Begin(128);
+            context.Begin(128, 1);
             context.DrawRectangle(new SolidColorBrush(CoreColor.FromRgb(255, 0, 0)), new Rect(0, 0, 64, 64));
             context.DrawRectangle(new SolidColorBrush(CoreColor.FromRgb(0, 0, 255)), new Rect(0, 0, 32, 32));
             context.Upload(mesh);
@@ -611,7 +611,7 @@ namespace Xamlity.Editor.Tests
             Assert.That(mesh.colors32[0], Is.EqualTo(new Color32(255, 0, 0, 255)));
             Assert.That(mesh.colors32[4], Is.EqualTo(new Color32(0, 0, 255, 255)));
 
-            context.Begin(128);
+            context.Begin(128, 1);
             context.Upload(mesh);
             Assert.That(mesh.vertexCount, Is.Zero);
             Assert.That(mesh.subMeshCount, Is.Zero);
@@ -709,11 +709,160 @@ namespace Xamlity.Editor.Tests
             AssertPixel(128, 32, Color.black);
         }
 
+        [Test]
+        public void ReferenceResolutionDefaultsToFullHd()
+        {
+            var gameObject = new GameObject("Xamlity default resolution test");
+            objects.Add(gameObject);
+            var root = gameObject.AddComponent<XamlityRoot>();
+
+            Assert.That(root.ReferenceResolution, Is.EqualTo(new Vector2Int(1920, 1080)));
+            var serialized = new SerializedObject(root);
+            Assert.That(serialized.FindProperty("referenceResolution").vector2IntValue,
+                Is.EqualTo(new Vector2Int(1920, 1080)));
+        }
+
+        [TestCase(3840, 2160, 2.0)]
+        [TestCase(2560, 1080, 1.0)]
+        [TestCase(960, 540, 0.5)]
+        [TestCase(1920, 1440, 1.0)]
+        public void ReferenceResolutionScalesBandAndUsesLogicalViewport(int width, int height, double scale)
+        {
+            var root = CreateRoot();
+            root.ReferenceResolution = new Vector2Int(1920, 1080);
+            root.Refresh(width, height);
+
+            Assert.That(root.Scale, Is.EqualTo(scale));
+            Assert.That(root.Mesh.vertices[0], Is.EqualTo(new Vector3(0, height, 0)));
+            Assert.That(root.Mesh.vertices[2], Is.EqualTo(new Vector3(width, height - (float)(64 * scale), 0)));
+            var border = (Border)root.Tree.RootElement;
+            Assert.That(border.RenderSize.Width, Is.EqualTo(width / scale));
+            Assert.That(border.RenderSize.Height, Is.EqualTo(64));
+
+            border.Height = double.NaN;
+            border.VerticalAlignment = Xamlity.Layout.VerticalAlignment.Stretch;
+            root.Refresh(width, height);
+            Assert.That(border.RenderSize, Is.EqualTo(new Xamlity.Layout.Size(width / scale, height / scale)));
+        }
+
+        [TestCase(0, 1080)]
+        [TestCase(1920, 0)]
+        [TestCase(-1, 1080)]
+        [TestCase(1920, -1)]
+        public void NonPositiveReferenceResolutionUsesScaleOne(int width, int height)
+        {
+            var root = CreateRoot();
+            root.ReferenceResolution = new Vector2Int(width, height);
+            root.Refresh(256, 128);
+
+            Assert.That(root.Scale, Is.EqualTo(1));
+            Assert.That(root.Tree.RootElement.RenderSize.Width, Is.EqualTo(256));
+            Assert.That(root.Mesh.vertices[2], Is.EqualTo(new Vector3(256, 64, 0)));
+        }
+
+        [TestCase(0, 128)]
+        [TestCase(256, 0)]
+        public void ZeroPixelDimensionUsesScaleOneAndFiniteRenderSize(int width, int height)
+        {
+            var root = CreateRoot();
+            root.ReferenceResolution = new Vector2Int(1920, 1080);
+
+            Assert.DoesNotThrow(() => root.Refresh(width, height));
+
+            Assert.That(root.Scale, Is.EqualTo(1));
+            var size = root.Tree.RootElement.RenderSize;
+            Assert.That(double.IsNaN(size.Width) || double.IsInfinity(size.Width), Is.False);
+            Assert.That(double.IsNaN(size.Height) || double.IsInfinity(size.Height), Is.False);
+        }
+
+        [Test]
+        public void HalfResolutionScalesTextPositionsAndQuadsWithoutChangingLogicalSizeOrUvs()
+        {
+            CreateFont();
+            var root = CreateRoot(KoreanTextPath, fontAsset);
+            root.ReferenceResolution = new Vector2Int(1920, 1080);
+            ((TextBlock)root.Tree.RootElement).Margin = new Xamlity.Layout.Thickness(16, 12, 0, 0);
+            root.Refresh(1920, 1080);
+            var originalVertices = root.Mesh.vertices;
+            var originalUvs = root.Mesh.uv;
+            var originalSize = root.Tree.RootElement.RenderSize;
+            Assert.That(originalVertices.Length, Is.EqualTo(8));
+
+            root.Refresh(960, 540);
+
+            Assert.That(root.Scale, Is.EqualTo(0.5));
+            Assert.That(root.Tree.RootElement.RenderSize, Is.EqualTo(originalSize));
+            Assert.That(root.Mesh.uv, Is.EqualTo(originalUvs));
+            var vertices = root.Mesh.vertices;
+            Assert.That(vertices.Length, Is.EqualTo(originalVertices.Length));
+            for (int i = 0; i < vertices.Length; i++)
+                Assert.That(vertices[i], Is.EqualTo(originalVertices[i] * 0.5f));
+        }
+
+        [TestCase(0.5)]
+        [TestCase(2.0)]
+        public void NestedClipEdgesScaleBeforeYFlip(double scale)
+        {
+            mesh = new Mesh();
+            var context = new MeshDrawingContext();
+            context.Begin(128, scale);
+            context.PushClip(new Rect(10, 8, 40, 32));
+            context.PushClip(new Rect(20, 4, 40, 20));
+            context.DrawRectangle(new SolidColorBrush(CoreColor.FromRgb(255, 0, 0)), new Rect(0, 0, 100, 100));
+            context.Pop();
+            context.Pop();
+            context.Upload(mesh);
+
+            Assert.That(mesh.vertices, Is.EqualTo(new[]
+            {
+                new Vector3((float)(20 * scale), (float)(128 - 8 * scale), 0),
+                new Vector3((float)(50 * scale), (float)(128 - 8 * scale), 0),
+                new Vector3((float)(50 * scale), (float)(128 - 24 * scale), 0),
+                new Vector3((float)(20 * scale), (float)(128 - 24 * scale), 0)
+            }));
+        }
+
+        [Test]
+        public void GameCameraDrawsHalfScaleBandInTop32Pixels()
+        {
+            var root = CreateRoot();
+            root.ReferenceResolution = new Vector2Int(512, 256);
+            root.Refresh(256, 128);
+            Assert.That(root.Scale, Is.EqualTo(0.5));
+            Render(CreateCamera());
+
+            for (int y = 0; y < 128; y++)
+                for (int x = 0; x < 256; x++)
+                    AssertPixel(x, y, y >= 96 ? Color.red : Color.black);
+        }
+
+        [Test]
+        public void ScaleChangeRebuildsMeshAndUnchangedRefreshDoesNotAllocate()
+        {
+            var root = CreateRoot();
+            root.Refresh(256, 128);
+            var originalMesh = root.Mesh;
+            root.ReferenceResolution = new Vector2Int(512, 256);
+            root.Refresh(256, 128);
+
+            Assert.That(root.Scale, Is.EqualTo(0.5));
+            Assert.That(root.MeshRebuildCount, Is.EqualTo(2));
+            Assert.That(root.Mesh.vertices[2], Is.EqualTo(new Vector3(256, 96, 0)));
+            long before = System.GC.GetAllocatedBytesForCurrentThread();
+            root.Refresh(256, 128);
+            long allocated = System.GC.GetAllocatedBytesForCurrentThread() - before;
+            Assert.That(allocated, Is.Zero);
+            Assert.That(() => root.Refresh(256, 128), Is.Not.AllocatingGCMemory());
+            Assert.That(root.MeshRebuildCount, Is.EqualTo(2));
+            Assert.That(root.Mesh, Is.SameAs(originalMesh));
+        }
+
         private XamlityRoot CreateRoot(string path = TopBandPath, TMP_FontAsset defaultFont = null)
         {
             var gameObject = new GameObject("Xamlity test root");
             objects.Add(gameObject);
             var root = gameObject.AddComponent<XamlityRoot>();
+            root.ReferenceResolution = new Vector2Int(256, 128);
             var asset = AssetDatabase.LoadAssetAtPath<XamlAsset>(path);
             Assert.That(asset, Is.Not.Null);
             root.Build(asset, defaultFont);

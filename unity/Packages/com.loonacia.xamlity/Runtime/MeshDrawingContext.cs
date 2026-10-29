@@ -20,6 +20,7 @@ namespace Xamlity.Unity
         private double currentOpacity = 1;
         private Rect? currentClip;
         private int viewportHeight;
+        private double coordinateScale;
 
         private readonly struct DrawingState
         {
@@ -50,9 +51,10 @@ namespace Xamlity.Unity
 
         internal IReadOnlyList<Batch> Batches => batches;
 
-        internal void Begin(int pixelHeight)
+        internal void Begin(int pixelHeight, double scale)
         {
             viewportHeight = pixelHeight;
+            coordinateScale = scale;
             vertices.Clear();
             colors.Clear();
             uvs.Clear();
@@ -133,10 +135,11 @@ namespace Xamlity.Unity
                 batches.Add(new Batch(texture, indices.Count, 6));
 
             int first = vertices.Count;
-            float left = (float)rect.X;
-            float right = (float)(rect.X + rect.Width);
-            float top = (float)(viewportHeight - rect.Y);
-            float bottom = (float)(viewportHeight - rect.Y - rect.Height);
+            // Scale the clipped logical edges before converting to bottom-left pixel coordinates.
+            float left = (float)(rect.X * coordinateScale);
+            float right = (float)((rect.X + rect.Width) * coordinateScale);
+            float top = (float)(viewportHeight - rect.Y * coordinateScale);
+            float bottom = (float)(viewportHeight - (rect.Y + rect.Height) * coordinateScale);
             vertices.Add(new Vector3(left, top, 0));
             vertices.Add(new Vector3(right, top, 0));
             vertices.Add(new Vector3(right, bottom, 0));

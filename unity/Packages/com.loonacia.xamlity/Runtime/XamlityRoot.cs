@@ -11,6 +11,7 @@ namespace Xamlity.Unity
     public sealed class XamlityRoot : MonoBehaviour
     {
         [SerializeField] private XamlAsset xaml;
+        [SerializeField] private Vector2Int referenceResolution = new Vector2Int(1920, 1080);
 
         private static readonly List<XamlityRoot> activeRoots = new List<XamlityRoot>();
         private readonly MeshDrawingContext drawingContext = new MeshDrawingContext();
@@ -22,6 +23,12 @@ namespace Xamlity.Unity
         internal Mesh Mesh { get; private set; }
         internal IReadOnlyList<MeshDrawingContext.Batch> Batches => drawingContext.Batches;
         internal int MeshRebuildCount { get; private set; }
+        internal double Scale { get; private set; } = 1;
+        internal Vector2Int ReferenceResolution
+        {
+            get => referenceResolution;
+            set => referenceResolution = value;
+        }
 
         private void Awake()
         {
@@ -63,18 +70,24 @@ namespace Xamlity.Unity
             if (Tree == null)
                 return;
 
-            if (viewportWidth != pixelWidth || viewportHeight != pixelHeight)
+            double scale = referenceResolution.x <= 0 || referenceResolution.y <= 0
+                || pixelWidth <= 0 || pixelHeight <= 0
+                ? 1
+                : System.Math.Min((double)pixelWidth / referenceResolution.x,
+                    (double)pixelHeight / referenceResolution.y);
+            if (viewportWidth != pixelWidth || viewportHeight != pixelHeight || Scale != scale)
             {
                 viewportWidth = pixelWidth;
                 viewportHeight = pixelHeight;
-                // Even a fixed-size element needs new bottom-left vertex coordinates on resize.
+                Scale = scale;
+                // Even a fixed-size element needs new vertex coordinates on resize or scale changes.
                 Tree.RootElement.InvalidateVisual();
             }
-            Tree.UpdateLayout(new Size(pixelWidth, pixelHeight));
+            Tree.UpdateLayout(new Size(pixelWidth / scale, pixelHeight / scale));
             if (!Tree.IsRenderDirty)
                 return;
 
-            drawingContext.Begin(pixelHeight);
+            drawingContext.Begin(pixelHeight, scale);
             Tree.Render(drawingContext);
             drawingContext.Upload(Mesh);
             MeshRebuildCount++;
