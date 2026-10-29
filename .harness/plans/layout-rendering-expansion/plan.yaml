@@ -1,0 +1,656 @@
+id: layout-rendering-expansion
+goal: >
+  정적인 게임 HUD·메뉴 화면을 XAML로 배치할 수 있도록 레이아웃과 렌더링을 넓힌다. XAML 문법에 프로퍼티 요소(`<Border.Background>`)와
+  첨부 프로퍼티(`Canvas.Left`, `Grid.Row`)를 추가하고, Canvas, Grid(Pixel·Auto·star 정의, span, 정의의 Min/Max), TextBlock의
+  TextWrapping·TextAlignment(여러 줄), UIElement의 Opacity·ClipToBounds와 WPF식 레이아웃 클립, XamlityRoot의 기준 해상도 배율,
+  Border의 CornerRadius, Image(Texture2D/Sprite, Stretch, Sprite border 기반 9-slice, XAML 에셋 경로 참조)를 만든다.
+  새 HUD 샘플 씬에서 이 기능들로 만든 화면이 보이면 완료다.
+  스타일·템플릿·리소스, 바인딩, 입력, 컨트롤(Button 등), 코드비하인드, 핫리로드, FontFamily, sortingOrder, Project Settings UI,
+  Visibility는 이 계획에 넣지 않는다(다음 계획).
+  공통 규칙: 코드 식별자, 주석, 예외·오류 메시지는 영어로 쓴다. Core 코드는 netstandard2.1 API와 C# 9 문법만 쓴다.
+  지원하는 이름은 WPF와 같은 의미로 동작해야 하고, 지원하지 않는 값·문법은 조용히 무시하지 않고 오류로 알린다(ADR-004).
+  모든 스텝은 dotnet test와 unity test를 둘 다 통과해야 한다. 기존 테스트의 기대값은 스텝 description이 요구사항 변경으로 명시한 것만 바꾼다.
+  unity test 실행 중 Unity가 새 파일의 .meta를 만들며, 이 .meta 파일은 커밋 대상이므로 지우지 않는다.
+approved: true
+max_attempts: 3
+ac_timeout_sec: 1200
+steps:
+  - id: s1-markup-property-elements
+    title: support property elements and non-element object elements
+    type: feat
+    scope: markup
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/PRD.md (핵심 기능 1, 2), docs/ADR.md (ADR-003, ADR-004, ADR-012), docs/ARCHITECTURE.md (`Markup` 영역, IR 직렬화 형식),
+      unity/Packages/com.loonacia.xamlity/Core/Markup/*.cs (특히 XamlParser.cs, XamlTypeResolver.cs, XamlBuilder.cs, XamlValueConverter.cs),
+      Core/Rendering/SolidColorBrush.cs, Core/Layout/Panel.cs, Core/Layout/UIElementCollection.cs, Core/Controls/Border.cs,
+      dotnet/Xamlity.Core.Tests/Markup/XamlParserTests.cs, XamlBuilderTests.cs.
+
+      WPF와 같은 프로퍼티 요소 문법을 지원하고, UIElement가 아닌 객체(이 스텝에서는 SolidColorBrush)를 객체 요소로 만들 수 있게 한다.
+      IR 형식은 바꾸지 않는다. 프로퍼티 요소는 기존 XamlPropertyNode(TextValue null, Objects에 자식)로 표현된다.
+
+      1. SolidColorBrush: public 매개변수 없는 생성자와 public `Color Color { get; set; }`를 추가한다(기존 `(Color)` 생성자는 유지).
+         Brush는 DependencyObject가 아니다. Freezable이 없으므로(ADR-005) 사용 중인 브러시의 Color를 바꿔도 렌더 무효화는 일어나지 않는다.
+         이 동작을 바꾸려고 변경 알림을 만들지 마라. 이유: ADR-005가 Freezable을 제외했다.
+      2. XamlValueConverter: 대상 타입 `Color` 변환을 추가한다. Brush와 같은 색 문법이며 같은 색 파싱 코드를 재사용한다.
+      3. XamlTypeResolver.Resolve: 기본 xmlns에서 `Xamlity.Controls`, `Xamlity.Layout`, `Xamlity.Rendering` 네임스페이스의 public, 비추상 클래스
+         (구조체 제외)이면서 public 매개변수 없는 생성자가 있는 타입을 찾는다. UIElement 파생 조건은 없앤다. 대신 파서가 검사한다:
+         - 루트 요소는 UIElement여야 한다. 아니면 오류. 이유: XamlAsset.Build가 UIElement를 돌려준다.
+         - x:Name은 FrameworkElement에만 허용한다. 아니면 오류. 이유: 빌더가 FrameworkElement.Name에 넣으며 NameScope는 아직 없다.
+         - content property 자식(암시적이든 프로퍼티 요소든)의 타입이 대상(단일 값이면 프로퍼티 타입, 컬렉션이면 요소 타입)에 할당 가능하지 않으면 오류.
+      4. 프로퍼티 요소 `<Owner.Property>` (XamlParser):
+         - Owner는 그 요소 자신의 타입 이름이거나 기반 타입의 이름이어야 한다(`<Border.Background>`). 소유 타입이 다른 프로퍼티 요소
+           (`<Grid.Row>`, `<Canvas.Left>` 같은 첨부 프로퍼티 요소)는 지원하지 않는다는 오류로 둔다.
+         - 프로퍼티 해석은 속성과 같다(DP 먼저, 없으면 쓰기 가능한 CLR 프로퍼티). 단 컬렉션 프로퍼티(public 인스턴스 CLR 프로퍼티이고 타입이
+           `ICollection<T>`를 구현)는 읽기 전용이어도 허용한다.
+         - 컬렉션 프로퍼티: 객체 요소 0개 이상, 각각 T에 할당 가능. 단일 값 프로퍼티: 객체 요소 정확히 1개, 프로퍼티 타입에 할당 가능.
+         - 프로퍼티 요소에 XML 속성(xmlns 선언 제외)이 있거나, 공백이 아닌 텍스트가 있거나, 프로퍼티 요소 바로 안에 또 프로퍼티 요소가 오면 오류.
+         - 같은 프로퍼티를 속성과 프로퍼티 요소로 둘 다 설정하거나, content property를 암시적 자식과 `<Border.Child>`로 둘 다 설정하면
+           기존 "set more than once" 오류.
+         - IR 노드의 Line/Column은 프로퍼티 요소의 위치다.
+         - 기존 content property 판정(`PropertyType == typeof(UIElementCollection)`)을 위의 컬렉션 판정으로 일반화한다.
+      5. XamlBuilder: 객체 값 프로퍼티는 DP가 있으면 `SetValue(dp, obj)`, 없으면 CLR setter. 컬렉션 프로퍼티는 프로퍼티 값을 읽어
+         `ICollection<T>.Add`로 문서 순서대로 넣는다(MethodInfo 캐시). Reflection.Emit이나 런타임 코드 생성을 쓰지 마라. 이유: ADR-012, IL2CPP.
+
+      기존 테스트 변경(요구사항 변경이므로 허용): XamlParserTests의 `<Border.Child />`, `<Border.Resources />` "Property elements are not supported"
+      케이스는 새 동작(빈 단일 값 프로퍼티 요소 오류, 알 수 없는 프로퍼티 오류)을 검증하도록 바꾼다. 다른 기존 기대값은 바꾸지 마라.
+      만들지 마라: 첨부 프로퍼티(다음 스텝 s2), 마크업 확장, x:Key·리소스, 텍스트 값을 갖는 프로퍼티 요소(`<TextBlock.Text>abc</TextBlock.Text>`는 오류로 둔다).
+      이유: s2이거나 다음 계획 범위다.
+
+      테스트(dotnet/Xamlity.Core.Tests/Markup/):
+      - 파서: `<Border.Background><SolidColorBrush Color="#336699"/></Border.Background>`의 IR(프로퍼티 이름, 위치, 자식), 명시적 `<StackPanel.Children>`,
+        명시적 `<Border.Child>`, 위 오류 항목 각각의 메시지와 정확한 줄·열, Color 변환기의 정상·오류 입력.
+      - 빌더: 위 XAML을 Parse → Serialize → Deserialize → Build 한 뒤 Border.Background가 그 색의 SolidColorBrush이고, Children 순서가 문서 순서이며,
+        UIRoot 렌더 시 RecordingDrawingContext의 사각형 색이 맞음.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Markup/*
+      - unity/Packages/com.loonacia.xamlity/Core/Rendering/SolidColorBrush.cs
+      - dotnet/Xamlity.Core.Tests/Markup/*
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s2-core-canvas-attached
+    title: add attached properties and Canvas
+    type: feat
+    scope: core
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/ADR.md (ADR-004, ADR-005, ADR-007), docs/ARCHITECTURE.md (`Markup`의 IR 직렬화 형식),
+      unity/Packages/com.loonacia.xamlity/Core/Properties/DependencyProperty.cs, DependencyObject.cs, Core/Tree/UIElement.cs (OnPropertyChanged의 무효화),
+      Core/Layout/Panel.cs, StackPanel.cs, Core/Markup/*.cs (s1 결과), Editor/XamlImporter.cs,
+      dotnet/Xamlity.Core.Tests/Markup/XamlBuilderTests.cs (IR 버전 테스트), Layout/StackPanelTests.cs (테스트 스타일).
+
+      1. DependencyProperty: `public static DependencyProperty RegisterAttached(string name, Type propertyType, Type ownerType, PropertyMetadata defaultMetadata = null)`,
+         `internal bool IsAttached`. 검증 규칙과 레지스트리는 Register와 같다(같은 (owner, name)이 이미 있으면 ArgumentException).
+         첨부 프로퍼티는 소유 타입과 무관하게 어떤 DependencyObject에도 SetValue할 수 있다(이미 그렇다면 테스트로 고정한다).
+      2. Core/Layout/Canvas.cs: `public class Canvas : Panel`, 첨부 DP `Left`, `Top`, `Right`, `Bottom` (double, 기본 NaN, AffectsArrange)과
+         WPF와 같은 정적 접근자 `GetLeft(UIElement element)` / `SetLeft(UIElement element, double length)` 등(element가 null이면 ArgumentNullException).
+         WPF Canvas 규칙: MeasureOverride는 자식마다 `Measure(new Size(∞, ∞))`하고 (0,0)을 돌려준다. ArrangeOverride는 자식마다 Left가 NaN이 아니면
+         x = Left, 아니면 Right가 NaN이 아니면 x = finalSize.Width − 자식 DesiredSize.Width − Right, 둘 다 NaN이면 0이다(Top/Bottom도 같음).
+         그다음 `Arrange(new Rect(new Point(x, y), child.DesiredSize))`, 반환은 finalSize.
+         자식의 Canvas.Left 변경은 기존 규칙(AffectsArrange → 자식과 조상의 arrange 무효화)으로 Canvas가 다시 배치되게 한다. Canvas 전용 콜백을 만들지 마라.
+      3. XAML 첨부 속성(XamlParser): 점이 하나 있는 속성 이름 `Owner.Property`. Owner는 기본 xmlns의 타입으로 해석한다(XamlTypeResolver.Resolve).
+         - Owner가 요소 타입에 할당 가능하면(요소 타입이거나 그 기반) 일반 프로퍼티와 똑같이 처리하고 IR에도 일반 프로퍼티로 남긴다
+           (`<Border Border.Width="1"/>`은 Width). WPF와 같다.
+         - 아니면 `DependencyProperty.FromName(owner, Property)`가 있고 IsAttached여야 한다. 아니면 오류. Owner 타입을 찾지 못하면 알 수 없는 타입 오류.
+         - DP 등록은 정적 초기화에 달려 있으므로 조회 전에 소유 타입의 클래스 생성자를 실행한다(XamlTypeResolver.ResolveProperty와 같은 이유.
+           빌더도 같다). 이유: 그 타입의 인스턴스가 아직 없으면 FromName이 null을 돌려준다.
+         - 점이 없는 속성은 첨부 DP로 해석하지 않는다(`<Canvas Left="5"/>`는 알 수 없는 프로퍼티 오류). 점이 둘 이상이면 오류.
+         - 값 검증은 일반 속성과 같은 변환기를 쓴다.
+      4. IR 형식 v2: XamlPropertyNode에 `string OwnerTypeName`을 추가한다(첨부 프로퍼티면 `"<CLR 전체 이름>, <어셈블리 이름>"`, 아니면 null).
+         직렬화는 PropertyName 바로 뒤에 OwnerTypeName을 같은 문자열 규칙(존재 여부 bool + 문자열)으로 쓴다. FormatVersion을 2로 올린다.
+         v1 데이터는 기존 규칙대로 InvalidDataException이다. XamlBuilder는 OwnerTypeName이 있으면 그 타입(캐시)에서 DP를 찾아 SetValue한다.
+         Editor/XamlImporter.cs의 `[ScriptedImporter(1, "xaml")]` 버전을 2로 올린다. 이유: 이미 임포트된 v1 IR 에셋을 다시 만들게 한다. 안 하면 런타임 Deserialize가 실패한다.
+         docs/ARCHITECTURE.md의 IR 직렬화 형식 문단을 v2(OwnerTypeName 위치 포함)로 고친다.
+      기존 테스트 변경(요구사항 변경): XamlParserTests의 `Grid.Row="1"`(이제 알 수 없는 타입 'Grid' 오류. Grid는 s3에서 생긴다)과 `Border.Width="1"`(이제 정상)
+      케이스, XamlBuilderTests의 버전 1 바이트 레이아웃·버전 메시지 테스트를 v2에 맞춘다. 다른 기존 기대값은 바꾸지 마라.
+      만들지 마라: Grid(s3), Panel.ZIndex, 첨부 프로퍼티 요소 문법, 읽기 전용 DP. 이유: 이후 스텝이거나 PRD 범위 밖이다.
+
+      테스트:
+      - dotnet/Xamlity.Core.Tests/Layout/CanvasTests.cs: Left/Top 배치, Right/Bottom 배치, Left와 Right가 둘 다 있으면 Left 우선, 아무것도 없으면 (0,0),
+        자식은 무한대로 측정되고 Canvas desired는 (0,0), SetLeft로 한 자식을 옮기면 다른 자식의 ArrangeOverride 호출 횟수는 그대로, 접근자 null 예외.
+      - Properties 테스트: RegisterAttached 중복 예외, IsAttached, 소유 타입과 무관한 DependencyObject에 설정·조회.
+      - Markup 테스트: `<Canvas><Border Canvas.Left="10" Canvas.Top="20" Width="30" Height="40"/></Canvas>`를 Parse → Serialize → Deserialize → Build →
+        UpdateLayout 한 절대 좌표, OwnerTypeName 왕복, 위 오류 항목 각각의 메시지와 줄·열.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Properties/DependencyProperty.cs
+      - unity/Packages/com.loonacia.xamlity/Core/Layout/Canvas.cs*
+      - unity/Packages/com.loonacia.xamlity/Core/Markup/*
+      - unity/Packages/com.loonacia.xamlity/Editor/XamlImporter.cs
+      - docs/ARCHITECTURE.md
+      - dotnet/Xamlity.Core.Tests/Layout/CanvasTests.cs
+      - dotnet/Xamlity.Core.Tests/Properties/*
+      - dotnet/Xamlity.Core.Tests/Markup/*
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s3-core-grid
+    title: add Grid with pixel, auto, and star row and column definitions
+    type: feat
+    scope: core
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/PRD.md (핵심 기능 3), docs/ADR.md (ADR-004, ADR-005, ADR-007), unity/Packages/com.loonacia.xamlity/Core/Layout/*.cs
+      (특히 Canvas.cs — s2의 첨부 프로퍼티 패턴, UIElementCollection.cs), Core/Tree/FrameworkElement.cs, UIElement.cs, Core/Markup/XamlValueConverter.cs,
+      Core/Markup/XamlTypeResolver.cs (s1: 객체 요소 규칙), dotnet/Xamlity.Core.Tests/Layout/CanvasTests.cs, Tree/LayoutTests.cs (고정 크기 테스트 요소).
+
+      WPF Grid를 span 없이 구현한다(RowSpan/ColumnSpan과 정의의 Min/Max는 s4). namespace `Xamlity.Layout`:
+      1. `GridUnitType { Auto, Pixel, Star }`, `public readonly struct GridLength : IEquatable<GridLength>`: ctor `(double pixels)`,
+         `(double value, GridUnitType type)`, `Value`, `GridUnitType`, `IsAuto`, `IsAbsolute`, `IsStar`, `static GridLength Auto`, ==/!=,
+         InvariantCulture ToString("Auto", "*", "2*", "100"). 음수·NaN·무한대 값은 ArgumentException(WPF와 같음).
+         XamlValueConverter: "Auto"(대소문자 무시), "*", "2.5*", "100". 단위 접미사는 다른 double처럼 오류.
+      2. `RowDefinition`, `ColumnDefinition`: DependencyObject 파생(공통 기반이 필요하면 WPF처럼 public abstract `DefinitionBase`).
+         DP `Height` / `Width` (GridLength, 기본 1*). 읽기 전용 CLR `ActualHeight` / `ActualWidth` (마지막 Arrange 결과). DP가 바뀌면 소유 Grid를 InvalidateMeasure.
+         ADR-005에 따라 일반 필드나 자동 프로퍼티로 만들지 마라. XAML 객체 요소로 만들 수 있어야 한다(public 매개변수 없는 생성자).
+         `RowDefinitionCollection : IList<RowDefinition>`, `ColumnDefinitionCollection : IList<ColumnDefinition>`: 소유 Grid를 기록하고, null이나 다른 Grid에
+         속한 정의를 넣으면 예외, 추가·삭제·교체 시 소유 Grid를 InvalidateMeasure. Grid의 `RowDefinitions`, `ColumnDefinitions`는 읽기 전용 CLR 프로퍼티다
+         (s1의 컬렉션 프로퍼티 요소로 XAML에서 채워진다).
+      3. `public class Grid : Panel`: 첨부 DP `Row`, `Column` (int, 기본 0, AffectsMeasure)과 정적 Get/Set 접근자. 범위를 벗어난 값은 [0, 개수−1]로 고정한다(WPF와 같음).
+      4. 레이아웃은 WPF Grid와 같은 결과를 내야 한다. 이 스텝이 지원하는 경우의 규칙:
+         - 정의가 행·열 모두 없으면 단일 셀: 모든 자식을 availableSize로 측정, desired는 자식 desired의 최댓값, 모두 finalSize 전체로 배치.
+           한쪽만 없으면 그쪽은 1* 정의 하나로 취급한다.
+         - 측정 시 그 방향 availableSize가 무한대면 star 정의를 Auto로 취급한다(WPF SizeToContent).
+         - 정의별 측정 크기: Pixel은 값, Auto는 ∞(셀 측정 제약), Star는 ResolveStar 결과. 정의별 MinSize: Pixel은 값, 그 밖에는 0에서 시작해 셀 desired의 최댓값.
+         - WPF 셀 그룹: group1 = star 행도 star 열도 아님, group3 = star 열이고 star 행이 아님, group2 = star 행이고 Auto 열, group4 = star 행이고 Pixel·star 열.
+           순서: group1 측정 → 행 ResolveStar → group2 → 열 ResolveStar → group3 → group4. 셀은 (열 측정 크기, 행 측정 크기)로 측정하고 측정 후 정의 MinSize를 갱신한다.
+           WPF의 순환 의존 처리(Auto 행에 group3 셀이 있을 때의 반복 측정)는 만들지 마라. 이유: 고정 크기 콘텐츠에서는 결과가 같고, 서로 크기가 의존하는
+           콘텐츠에서만 차이가 나는데 구현 복잡도가 크다.
+         - ResolveStar(available): 남는 공간 = max(0, available − Pixel 크기 합 − Auto MinSize 합)을 star 가중치 비율로 나눈다. 가중치 0인 star는 0.
+         - desired = 행·열 각각 정의 MinSize의 합.
+         - Arrange: Pixel은 값(MinSize 이상), Auto는 MinSize, star는 finalSize에서 비-star 크기 합을 뺀 공간을 가중치로 나누되 MinSize보다 작아지지 않게 하고,
+           그 때문에 모자라는 공간은 나머지 star끼리 다시 나눈다(WPF 4.5+ 기본 동작). 정의 오프셋을 누적해 셀 사각형으로 자식을 Arrange하고
+           ActualWidth/ActualHeight를 기록한다.
+         - 내부 배열은 재사용한다. 변화 없는 두 번째 UpdateLayout은 할당 0.
+      만들지 마라: RowSpan/ColumnSpan, 정의 Min/Max(s4), ShowGridLines, SharedSizeGroup, Background. 이유: s4이거나 PRD 범위 밖이다.
+
+      테스트 dotnet/Xamlity.Core.Tests/Layout/GridTests.cs (고정 콘텐츠 크기 테스트 요소):
+      - 300x200 viewport, 열 "100, Auto, *", 행 "Auto, *, 2*", 자식 A(40x20, Row0 Col1), B(10x10, Row2 Col2, Stretch), C(30x30, Row1 Col0, Left/Top):
+        열 ActualWidth 100/40/160, 행 ActualHeight 20/60/120, A VisualOffset (100,0), B (140,80)이고 RenderSize 160x120, C (0,20), Grid DesiredSize (150,60).
+      - 무한 폭(가로 StackPanel 안), 열 "*, 2*", 자식 50x10(Col0)·30x10(Col1): Grid desired 폭 80, 배치 후 열 50/30.
+      - 정의 없는 단일 셀, 한쪽만 정의, Row/Column 범위 밖 고정, 가중치 0 star, 내용 없는 star 열은 desired에 기여 0.
+      - 무효화: Grid.SetRow 변경, ColumnDefinition.Width 변경, 정의 추가·삭제가 재측정을 일으킴. 변화 없는 UpdateLayout 할당 0.
+      - 다른 Grid에 속한 정의 추가 예외, GridLength 생성자 예외와 ToString, 변환기 정상·오류 입력.
+      - XAML 끝에서 끝까지: `<Grid.ColumnDefinitions>`·`<Grid.RowDefinitions>`와 `Grid.Row`·`Grid.Column`이 있는 문서 → Build → UpdateLayout → 절대 좌표.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Layout/Grid*
+      - unity/Packages/com.loonacia.xamlity/Core/Layout/RowDefinition*
+      - unity/Packages/com.loonacia.xamlity/Core/Layout/ColumnDefinition*
+      - unity/Packages/com.loonacia.xamlity/Core/Layout/DefinitionBase*
+      - unity/Packages/com.loonacia.xamlity/Core/Markup/XamlValueConverter.cs
+      - dotnet/Xamlity.Core.Tests/Layout/GridTests.cs
+      - dotnet/Xamlity.Core.Tests/Markup/*
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s4-core-grid-spans
+    title: support Grid spans and definition min and max constraints
+    type: feat
+    scope: core
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/ADR.md (ADR-004), unity/Packages/com.loonacia.xamlity/Core/Layout/Grid.cs, RowDefinition*.cs, ColumnDefinition*.cs (s3),
+      dotnet/Xamlity.Core.Tests/Layout/GridTests.cs.
+
+      s3 Grid에 span과 정의 제약을 더한다. WPF Grid와 같은 결과를 내야 한다.
+      1. 첨부 DP `Grid.RowSpan`, `Grid.ColumnSpan` (int, 기본 1, AffectsMeasure)과 정적 접근자. 1보다 작으면 1, 시작 인덱스부터 남은 정의 수를 넘으면 그 수로 고정한다.
+      2. 정의 DP `RowDefinition.MinHeight`(0) / `MaxHeight`(∞), `ColumnDefinition.MinWidth` / `MaxWidth` (double, 바뀌면 소유 Grid InvalidateMeasure).
+         Pixel: 크기와 MinSize 모두 clamp(값, Min, Max). Auto: MinSize는 Min 이상이고, 셀 desired는 `Math.Min(desired, Max)`로 반영한다(WPF UpdateMinSize).
+         Star: ResolveStar와 Arrange에서 Min/Max를 지킨다.
+      3. 셀 분류에 span 반영: 범위 안에 star 정의가 하나라도 있으면 star 셀, Auto가 하나라도 있으면 Auto 셀이다(group2 조건은 "Auto 열이 있고 star 열이 없음").
+         셀 측정 제약은 범위 안 정의 측정 크기의 합이다.
+      4. span이 2 이상인 셀의 desired는 그 그룹 측정이 끝난 뒤, span 길이가 짧은 것부터 WPF `EnsureMinSizeInDefinitionRange`와 같은 규칙으로 범위 안 정의의
+         MinSize에 나눠 넣는다: 요청 크기 ≤ 범위 MinSize 합이면 그대로. ≤ preferred 합(Auto는 MinSize, 그 밖에는 max(MinSize, 측정 크기))이면 Auto는 그대로 두고
+         비-Auto 정의를 preferred를 넘지 않게 균등히 늘린다. ≤ max 합(정의마다 max(Max, MinSize))이면 비-Auto 정의를 max 한도 안에서 먼저 균등히 늘리고 남으면
+         Auto 정의에 균등히 나눈다. 그보다 크면 모든 정의에 균등히 나눈다(WPF의 maxMaxSize 보정 포함).
+      5. star 분배(ResolveStar와 Arrange)는 Min/Max를 지키는 WPF 4.5+ 기본 알고리즘(ResolveStarMaxDiscrepancy, SetFinalSizeMaxDiscrepancy)과 같은 결과를 낸다:
+         비례 배분 결과가 Min보다 작거나 Max보다 큰 정의를 그 한계로 고정하고, 남은 공간을 나머지 star끼리 다시 비례 배분한다.
+      만들지 마라: 순환 의존 반복 측정, SharedSizeGroup, ShowGridLines. 이유: s3와 같다.
+
+      테스트(GridTests.cs에 추가):
+      - 열 "Auto, Auto", Col0 자식 폭 30, Col0부터 ColumnSpan=2인 자식 폭 100 → 열 65/35. 같은 구성의 RowSpan → 행 65/35.
+      - span이 범위를 넘거나 0 이하이면 고정.
+      - 폭 300, star 열 3개 중 첫 열 MaxWidth=50 → 50/125/125. star 열 2개 중 첫 열 MinWidth=200 → 200/100.
+      - Pixel 100에 MaxWidth=60 → 60. Auto에 MinWidth=80, 내용 30 → 80. Auto에 MaxWidth=20, 내용 30 → 20(넘친 내용의 클립은 s7).
+      - star 열을 지나는 span 셀이 group 분류를 바꾸는 경우의 좌표, Min/Max 변경이 재측정을 일으킴, 변화 없는 UpdateLayout 할당 0.
+      - XAML 끝에서 끝까지 `Grid.ColumnSpan` 하나.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Layout/Grid.cs
+      - unity/Packages/com.loonacia.xamlity/Core/Layout/RowDefinition*
+      - unity/Packages/com.loonacia.xamlity/Core/Layout/ColumnDefinition*
+      - unity/Packages/com.loonacia.xamlity/Core/Layout/DefinitionBase*
+      - dotnet/Xamlity.Core.Tests/Layout/GridTests.cs
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s5-core-text-wrapping
+    title: wrap and align multi-line TextBlock text
+    type: feat
+    scope: core
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/ADR.md (ADR-004, ADR-010: 텍스트 레이아웃은 Core가 한다), docs/ARCHITECTURE.md (횡단 관심사 > 성능),
+      unity/Packages/com.loonacia.xamlity/Core/Controls/TextBlock.cs, Core/Rendering/GlyphRun.cs, ITextMeasurer.cs,
+      dotnet/Xamlity.Core.Tests/Rendering/TextBlockTests.cs (FakeTextMeasurer: advance = fontSize×0.5, Ascent = 0.8×fontSize, LineHeight = 1.2×fontSize).
+
+      1. namespace `Xamlity.Controls`: `TextWrapping { WrapWithOverflow, NoWrap, Wrap }`, `TextAlignment { Left, Right, Center, Justify }`
+         (WPF와 같은 멤버와 순서).
+      2. TextBlock DP `TextWrapping` (기본 NoWrap, AffectsMeasure|AffectsRender), `TextAlignment` (기본 Left, AffectsMeasure|AffectsRender|Inherits. WPF와 같음).
+      3. 줄 나누기 규칙:
+         - "\r\n", "\n", "\r"은 모든 모드에서 강제 줄바꿈이고 글리프로 측정하지 않는다(measurer에 넘기지 않는다).
+         - 줄바꿈 기회는 공백(U+0020) 뒤뿐이다. 한글도 공백(단어) 단위로 나뉜다. CJK 글자 사이 줄바꿈, 하이픈, UAX #14는 만들지 마라.
+           이유: v1은 한글 단어 단위 줄바꿈으로 충분하고 PRD가 복잡한 스크립트 처리를 범위 밖에 두었다.
+         - Wrap/WrapWithOverflow: 다음 단어를 붙이면 줄 폭이 제약 폭을 넘을 때 그 단어 앞(앞 공백 뒤)에서 나눈다. 줄 끝 공백은 폭을 넘어도 그 줄에 매달린다.
+           단어 하나가 제약 폭보다 길면 Wrap은 코드 포인트 경계에서 자르고(한 줄에 최소 한 글자), WrapWithOverflow는 자르지 않고 넘친다.
+         - 소프트 줄바꿈 지점의 끝 공백은 그 줄의 폭과 GlyphRun에서 뺀다. 강제 줄바꿈으로 끝나는 줄과 NoWrap 줄의 끝 공백은 지금처럼 폭에 포함한다.
+         - 제약 폭이 무한대면 소프트 줄바꿈이 없다. 빈 문자열은 높이 LineHeight인 한 줄(기존과 같음). 연속 줄바꿈이 만든 빈 줄도 한 줄 높이를 차지한다.
+      4. 측정: desired = (가장 긴 줄 폭, 줄 수 × LineHeight). 줄 나누기는 MeasureOverride의 availableSize.Width로 한다.
+         ArrangeOverride를 추가해, 줄바꿈 모드이고 finalSize.Width가 줄을 나눈 폭과 다르면 그 폭으로 다시 나눈다(WPF TextBlock과 같음). 반환은 finalSize.
+      5. 그리기: 줄마다 GlyphRun 하나(글리프가 없는 줄도 빈 GlyphRun, 기존 빈 텍스트 동작과 같음), `DrawGlyphRun(Foreground, run, new Point(x, Ascent + i × LineHeight))`.
+         x는 RenderSize.Width(W) 기준 정렬: Left 0, Right W − 줄 폭, Center (W − 줄 폭) / 2. Justify는 마지막 줄과 강제 줄바꿈으로 끝나는 줄은 Left로 두고,
+         나머지 줄은 줄 안쪽 공백 글리프의 advance를 균등히 늘려 W를 채운다(공백이 없으면 Left). x가 음수가 되어도 그대로 둔다(넘친 텍스트의 클립은 s7).
+      6. 성능: Text·FontSize·폰트·측정기·줄바꿈 모드·줄을 나눈 폭이 같으면 줄 레이아웃과 GlyphRun을 다시 만들지 않는다. 정렬만 바뀌면 줄을 다시 나누지 않는다
+         (Justify는 W가 바뀔 때 해당 줄의 advance만 다시 만든다). 변화 없는 UpdateLayout + Render는 할당 0(기존 테스트 유지).
+      기존 테스트 변경(요구사항 변경): TextBlockTests의 `"A\r\nB"` 케이스는 CR·LF를 measurer에 넘기지 않고 두 줄이 되는 새 동작을 검증하도록 바꾼다.
+      다른 기존 기대값은 바꾸지 마라.
+      만들지 마라: TextTrimming, LineHeight·LineStackingStrategy 프로퍼티, Inlines, FontFamily, 폰트 폴백, 커닝. 이유: PRD 범위 밖이거나 이후 계획이다.
+
+      테스트 dotnet/Xamlity.Core.Tests/Rendering/TextWrappingTests.cs (FakeTextMeasurer 재사용, FontSize 10 → 글자 5px, LineHeight 12, Ascent 8):
+      - "AB CD EF", Width=30, Wrap → 줄 "AB CD"(폭 25)와 "EF"(10), 기준선 y 8과 20, DesiredSize 높이 24. Center → x 2.5와 10, Right → 5와 20,
+        Justify → 첫 줄 공백 advance 10, 둘째 줄 x 0.
+      - "ABCDEFGH", Width=30: Wrap → "ABCDEF"/"GH", WrapWithOverflow → 폭 40인 한 줄, NoWrap → 한 줄. "AB CDEFGHIJ", Width=30, Wrap → "AB"/"CDEFGH"/"IJ".
+      - NoWrap에서 "AB\nCD", "AB\r\nCD" → 두 줄, "AB\n\nCD" → 세 줄(높이 36). 한글 "가나 다라 마바", Width=25, Wrap → "가나 다라"/"마바".
+      - 측정 폭과 배치 폭이 다른 테스트 전용 부모에서 배치 폭으로 다시 나뉨. 무한 폭 제약에서는 나뉘지 않음.
+      - Border에 설정한 TextAlignment가 자식 TextBlock에 상속됨. 같은 값 재설정은 GlyphRun을 다시 만들지 않음. 변화 없는 UpdateLayout + Render 할당 0.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Controls/TextBlock.cs
+      - unity/Packages/com.loonacia.xamlity/Core/Controls/TextWrapping.cs*
+      - unity/Packages/com.loonacia.xamlity/Core/Controls/TextAlignment.cs*
+      - dotnet/Xamlity.Core.Tests/Rendering/TextWrappingTests.cs
+      - dotnet/Xamlity.Core.Tests/Rendering/TextBlockTests.cs
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s6-rendering-opacity
+    title: apply element Opacity through PushOpacity
+    type: feat
+    scope: rendering
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/PRD.md (핵심 기능 4의 Opacity), docs/ARCHITECTURE.md (레이어 규칙의 메시 배치, 횡단 관심사 > 성능),
+      unity/Packages/com.loonacia.xamlity/Core/Rendering/IDrawingContext.cs, Core/Tree/UIElement.cs (Render), UIRoot.cs (OffsetDrawingContext),
+      Runtime/MeshDrawingContext.cs, Tests/Editor/RenderingTests.cs, dotnet/Xamlity.Core.Tests/Rendering/RecordingDrawingContext.cs,
+      BorderRenderingTests.cs, TextBlockTests.cs (각각의 private EmptyDrawingContext).
+
+      1. IDrawingContext에 WPF DrawingContext와 같은 이름으로 `void PushOpacity(double opacity)`, `void Pop()`을 추가한다. Pop은 가장 최근 Push를 되돌린다
+         (s7의 PushClip도 같은 스택을 쓴다). UIRoot.OffsetDrawingContext는 그대로 전달한다.
+      2. UIElement DP `Opacity` (double, 기본 1.0, AffectsRender). 렌더 순회에서 Opacity가 1보다 작으면 그 요소의 OnRender 전에 PushOpacity하고,
+         자손까지 그린 뒤 Pop한다. Opacity가 0 이하이거나 NaN이면 그 요소와 자손의 명령을 하나도 내지 않는다. 1 이상이면 Push하지 않는다.
+         Opacity 변경은 레이아웃을 무효화하지 않는다.
+      3. MeshDrawingContext: 불투명도 스택(재사용 리스트). 현재 불투명도는 스택 값의 곱을 [0,1]로 고정한 값이다.
+         정점 색 알파 = 브러시 알파 × 현재 불투명도(반올림한 바이트). Begin에서 스택을 비운다. 빈 스택에서 Pop하면 InvalidOperationException.
+         셰이더는 바꾸지 마라. 이유: PRD가 Opacity를 "자식 알파에 곱함"으로 정했다(WPF의 그룹 불투명도와 달리 겹친 자식끼리 비쳐 보이는 것은 의도된 동작).
+      4. 테스트 도우미: BorderRenderingTests·TextBlockTests의 private EmptyDrawingContext를 dotnet/Xamlity.Core.Tests/Rendering/EmptyDrawingContext.cs(internal)
+         하나로 합친다. 이유: 이 계획에서 IDrawingContext가 여러 번 늘어나 매번 두 곳을 고치게 된다. RecordingDrawingContext에는 모든 호출을 순서대로 담는
+         목록을 추가한다(기존 Rectangles/GlyphRuns는 그대로 두고 기존 테스트를 바꾸지 않는다).
+      만들지 마라: PushClip(s7), OpacityMask, 그룹 불투명도(오프스크린 렌더). 이유: s7이거나 PRD 범위 밖이다.
+
+      테스트:
+      - Core dotnet/Xamlity.Core.Tests/Rendering/OpacityTests.cs: PushOpacity → 그리기 → Pop 순서와 값, 중첩, Opacity 0이면 자손 명령 없음, 1이면 Push 없음,
+        Opacity 변경은 render dirty를 만들고 measure/arrange는 유효함, 변화 없는 Render 할당 0.
+      - Unity RenderingTests.cs: MeshDrawingContext 단위 — PushOpacity(0.5) 안 알파 255 사각형 → 128, 중첩 0.5×0.5 → 64, Pop 뒤 원래 알파, 빈 스택 Pop 예외.
+        픽셀 — TopBand 루트의 Border에 코드로 Opacity 0.5를 주고 렌더하면 띠 안 R이 약 188/255(±3)이고 G·B는 0.
+        188인 이유: 셰이더가 linear 공간에서 블렌딩하므로 linear 0.5가 sRGB 타깃에 인코딩된다. WPF의 sRGB 공간 블렌딩(128)과 다른 것은 알려진 차이이며
+        이 스텝에서 고치지 않는다. 기존 픽셀 테스트는 기대값을 바꾸지 않고 통과해야 한다.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Rendering/IDrawingContext.cs
+      - unity/Packages/com.loonacia.xamlity/Core/Tree/UIElement.cs
+      - unity/Packages/com.loonacia.xamlity/Core/Tree/UIRoot.cs
+      - unity/Packages/com.loonacia.xamlity/Runtime/MeshDrawingContext.cs
+      - unity/Packages/com.loonacia.xamlity/Tests/Editor/RenderingTests.cs
+      - dotnet/Xamlity.Core.Tests/Rendering/*
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s7-rendering-clip
+    title: clip elements to their bounds and layout slots
+    type: feat
+    scope: rendering
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/PRD.md (핵심 기능 4의 사각형 클립), unity/Packages/com.loonacia.xamlity/Core/Tree/UIElement.cs, FrameworkElement.cs
+      (ArrangeCore는 WPF FrameworkElement.ArrangeCore를 옮긴 코드다), UIRoot.cs, Core/Layout/Canvas.cs, Core/Rendering/IDrawingContext.cs (s6),
+      Runtime/MeshDrawingContext.cs (s6의 스택), Tests/Editor/RenderingTests.cs, dotnet/Xamlity.Core.Tests/Rendering/RecordingDrawingContext.cs, EmptyDrawingContext.cs.
+
+      1. IDrawingContext `void PushClip(Rect clipRect)` (호출자 좌표계의 축 정렬 사각형, WPF PushClip에 해당). Pop은 s6과 같은 스택이다.
+         OffsetDrawingContext는 절대 좌표로 옮겨 전달한다.
+      2. UIElement DP `ClipToBounds` (bool, false, AffectsRender). `protected virtual Rect? GetLayoutClip(Size layoutSlotSize)` — 기본 구현은
+         ClipToBounds면 (0,0,RenderSize), 아니면 null. layoutSlotSize는 마지막 Arrange의 finalRect 크기다.
+      3. FrameworkElement: WPF ArrangeCore처럼 NeedsClipBounds를 계산해 둔다. 다음 중 하나면 true: 배치 크기를 unclippedDesiredSize까지 키운 경우,
+         Max 제약으로 배치 크기를 줄인 경우, Max로 자른 ink 크기가 RenderSize보다 작은 경우, 클라이언트 크기(슬롯 − Margin)가 ink 크기보다 작은 경우.
+         GetLayoutClip 오버라이드는 WPF FrameworkElement.GetLayoutClip과 같다(LayoutTransform 부분 제외):
+         - NeedsClipBounds도 ClipToBounds도 아니면 null.
+         - maxWidthClip = Width를 반영한 최대 폭이 무한대면 RenderSize.Width, 아니면 그 값(높이도 같음).
+           needToClipLocally = ClipToBounds || maxWidthClip < RenderSize.Width || maxHeightClip < RenderSize.Height.
+         - inkSize = RenderSize를 최대 폭·높이로 자른 크기. clippingSize = (max(0, 슬롯 폭 − Margin 가로 합), 높이도 같음).
+           needToClipSlot = clippingSize가 어느 방향이든 inkSize보다 작음.
+         - needToClipSlot이면 (−offset.X, −offset.Y, clippingSize). offset은 ArrangeCore와 같은 정렬 규칙(Stretch이고 ink가 더 크면 Left/Top)으로
+           clippingSize 안에 inkSize를 둘 때의 오프셋이다. needToClipLocally면 (0,0,maxWidthClip,maxHeightClip)과 교집합.
+           needToClipSlot이 아니고 needToClipLocally면 (0,0,maxWidthClip,maxHeightClip).
+         Canvas는 WPF처럼 GetLayoutClip을 오버라이드해 ClipToBounds일 때만 (0,0,RenderSize), 아니면 null.
+      4. 렌더 순회: 클립이 있으면 OnRender 전에 PushClip(요소 로컬 좌표), Opacity Push는 그 안쪽(WPF Visual의 clip → opacity 순서).
+         자손까지 그린 뒤 넣은 순서의 반대로 Pop.
+      5. MeshDrawingContext: 클립 스택(현재 클립 = 스택 사각형의 교집합). 쿼드를 CPU에서 현재 클립으로 자르고, 자른 비율만큼 UV를 선형 보간한다(글리프 쿼드 포함).
+         완전히 밖인 쿼드는 정점과 배치를 만들지 않는다. 셰이더·머티리얼은 바꾸지 마라. 이유: RenderTransform이 PRD 범위 밖이라 모든 클립이 축 정렬
+         사각형이므로 CPU로 정확히 자를 수 있고, 배치가 끊기지 않는다.
+      만들지 마라: UIElement.Clip(Geometry), 스텐실·scissor 클립, UseLayoutRounding. 이유: PRD 범위 밖이다.
+
+      테스트:
+      - Core dotnet/Xamlity.Core.Tests/Rendering/ClipTests.cs: ClipToBounds 사각형; Width=50인 NoWrap TextBlock(텍스트 폭 120, FontSize 12)의 로컬 클립
+        (0,0,50,14.4); 높이 20인 Width 100 Border 안의 Width 200·Height 20 자식 — Left 정렬이면 (0,0,100,20), Center 정렬이면 (50,0,100,20);
+        Canvas 안에서 넘치는 자식은 클립 없음, Canvas.ClipToBounds면 클립; 클립이 필요 없는 일반 배치는 PushClip이 없어 기존 명령 순서가 그대로임;
+        Clip/Opacity Push·Pop 순서와 중첩; 변화 없는 Render 할당 0.
+      - Unity RenderingTests.cs: MeshDrawingContext 단위 — 부분 클립된 사각형의 정점, 글리프 쿼드 UV 비례 보간, 완전히 밖이면 정점 0, 중첩 교집합과 Pop 복원.
+        픽셀 — 왼쪽 위 ClipToBounds Border(Width 64) 안 Width 128 빨간 자식: x < 64 빨강, x ≥ 64 검정. 기존 픽셀 테스트는 기대값 그대로 통과.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Rendering/IDrawingContext.cs
+      - unity/Packages/com.loonacia.xamlity/Core/Tree/UIElement.cs
+      - unity/Packages/com.loonacia.xamlity/Core/Tree/FrameworkElement.cs
+      - unity/Packages/com.loonacia.xamlity/Core/Tree/UIRoot.cs
+      - unity/Packages/com.loonacia.xamlity/Core/Layout/Canvas.cs
+      - unity/Packages/com.loonacia.xamlity/Runtime/MeshDrawingContext.cs
+      - unity/Packages/com.loonacia.xamlity/Tests/Editor/RenderingTests.cs
+      - dotnet/Xamlity.Core.Tests/Rendering/*
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s8-unity-reference-resolution
+    title: scale logical pixels to the root's reference resolution
+    type: feat
+    scope: unity
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/PRD.md (핵심 기능 12), docs/ARCHITECTURE.md (횡단 관심사 > 좌표와 해상도), unity/Packages/com.loonacia.xamlity/Runtime/XamlityRoot.cs,
+      Runtime/MeshDrawingContext.cs (s6·s7의 불투명도·클립 스택), Tests/Editor/RenderingTests.cs, SampleSetupTests.cs.
+
+      1. XamlityRoot: `[SerializeField] private Vector2Int referenceResolution = new Vector2Int(1920, 1080);`와 테스트용 internal 접근자.
+         배율 s = min(pixelWidth / 기준 폭, pixelHeight / 기준 높이) — 기준 해상도 전체가 화면 안에 들어가게 맞추는 비율이다.
+         논리 viewport = (pixelWidth / s, pixelHeight / s)이고 UpdateLayout은 논리 크기로 한다. 기준 해상도 성분이 0 이하면 배율 1이다.
+         픽셀 크기나 배율이 바뀌면 기존 리사이즈 처리처럼 렌더를 무효화한다. 마지막 배율을 테스트가 읽을 수 있게 internal로 둔다.
+      2. MeshDrawingContext.Begin에 배율을 넘긴다. 모든 좌표(사각형, 글리프 위치·크기, 클립 사각형)에 논리 → 픽셀 배율을 적용한 뒤 y를 뒤집는다.
+         글자 측정(TmpTextMeasurer)과 Core 레이아웃은 논리 단위 그대로다. Core 코드를 바꾸지 마라. 이유: 배율은 어댑터의 좌표 변환이다(ARCHITECTURE 좌표와 해상도).
+      3. 기존 테스트: RenderingTests의 루트 생성 도우미에서 기준 해상도를 렌더 타깃 크기(256x128)로 설정해 배율 1을 만들고 기존 기대값은 그대로 둔다.
+         MeshDrawingContext를 직접 쓰는 단위 테스트는 배율 1을 넘긴다. 이것 말고 기존 테스트의 기대값을 바꾸지 마라.
+      4. docs/ARCHITECTURE.md "좌표와 해상도"에 배율 규칙(min 비율, 논리 viewport, 기본 1920x1080)을 짧게 적는다.
+      만들지 마라: sortingOrder, 맞춤 모드 선택(matchWidthOrHeight 등), 픽셀 스냅, Project Settings UI. 이유: 이 계획 범위 밖이다.
+
+      테스트(RenderingTests.cs에 추가):
+      - 기준 1920x1080에서 Refresh(3840, 2160) → 배율 2, TopBand(Height 64) 메시의 띠 높이 128px. Refresh(2560, 1080) → 배율 1, 루트 요소 RenderSize 2560x1080.
+        Refresh(960, 540) → 배율 0.5, 같은 TextBlock의 글리프 쿼드 크기가 배율 1일 때의 절반. 클립 사각형에도 배율 적용.
+      - 픽셀: 256x128 타깃, 기준 512x256 → 배율 0.5 → TopBand 띠가 위 32px만 빨강이고 나머지는 검정.
+      - 배율이 바뀌면 메시를 다시 만들고, 변화 없는 두 번째 Refresh는 다시 만들지 않으며 할당 0.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Runtime/XamlityRoot.cs
+      - unity/Packages/com.loonacia.xamlity/Runtime/MeshDrawingContext.cs
+      - unity/Packages/com.loonacia.xamlity/Tests/Editor/RenderingTests.cs
+      - docs/ARCHITECTURE.md
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s9-core-corner-radius
+    title: add Border CornerRadius with rounded drawing commands
+    type: feat
+    scope: core
+    description: |
+      먼저 읽을 파일: docs/ADR.md (ADR-004, ADR-005), unity/Packages/com.loonacia.xamlity/Core/Controls/Border.cs, Core/Layout/Thickness.cs (구조체 스타일),
+      Core/Markup/XamlValueConverter.cs (Thickness 변환기), Core/Rendering/IDrawingContext.cs, Core/Tree/UIRoot.cs, Runtime/MeshDrawingContext.cs,
+      dotnet/Xamlity.Core.Tests/Rendering/BorderRenderingTests.cs, RecordingDrawingContext.cs, EmptyDrawingContext.cs.
+
+      1. Core/Layout/CornerRadius.cs: `public readonly struct CornerRadius : IEquatable<CornerRadius>` — ctor `(double uniformRadius)`,
+         `(double topLeft, double topRight, double bottomRight, double bottomLeft)`, 같은 이름의 프로퍼티, ==/!=, InvariantCulture ToString.
+         생성자는 값을 검증하지 않는다(WPF 구조체와 같음).
+         변환기: "a" 또는 "a,b,c,d"(쉼표나 공백 구분, WPF CornerRadiusConverter처럼 값 1개 또는 4개만). 음수·NaN·무한대는 오류
+         (WPF Border의 값 검증과 같은 결과를 임포트 시점에 낸다).
+      2. Border DP `CornerRadius` (기본 0, AffectsMeasure|AffectsRender — WPF와 같음).
+      3. IDrawingContext:
+         - `void DrawRoundedRectangle(Brush brush, Rect rectangle, CornerRadius cornerRadius)` — 둥근 사각형 채우기.
+         - `void DrawRoundedBorder(Brush brush, Rect outerRectangle, CornerRadius outerCornerRadius, Rect innerRectangle, CornerRadius innerCornerRadius)` —
+           바깥 모양에서 안쪽 모양을 뺀 영역 채우기. 안쪽 사각형의 폭이나 높이가 0이면 바깥 모양 전체.
+         모서리는 원형이다. 넘겨지는 반지름은 각 변에서 이웃한 두 반지름의 합이 그 변 길이를 넘지 않는다(호출자가 보장). OffsetDrawingContext는 사각형을 절대 좌표로 옮겨 전달한다.
+      4. Border.OnRender: 네 반지름이 모두 0이면 기존 경로 그대로(명령과 순서 불변). 아니면 WPF Border 규칙을 원형 모서리로 옮긴다:
+         - 바깥 사각형 (0,0,W,H), 안쪽 사각형은 BorderThickness만큼 줄인 사각형.
+         - 모서리마다 t = 그 모서리에 닿는 두 변 두께 중 큰 값의 절반. 바깥 반지름 = r == 0 ? 0 : r + t, 안쪽 반지름 = max(0, r − t).
+           두께가 균일하면 WPF와 정확히 같고, 균일하지 않으면 WPF의 타원 모서리를 원형으로 근사한다(알려진 차이).
+         - 한 사각형의 반지름 합이 변 길이를 넘으면 그 사각형의 네 반지름에 같은 배율 min(변 길이 / 이웃 반지름 합)을 곱한다(CSS 규칙).
+           이유: WPF는 변마다 타원으로 나누지만 원형 모서리만 지원하므로.
+         - BorderBrush가 있고 두께 중 하나라도 0보다 크면 DrawRoundedBorder, 그다음 Background가 있고 안쪽 사각형이 비어 있지 않으면
+           DrawRoundedRectangle(안쪽 사각형, 안쪽 반지름). 기존처럼 테두리 먼저, 배경 나중.
+      5. Runtime/MeshDrawingContext.cs에 두 메서드를 빈 본문으로 추가해 Unity 컴파일을 유지한다. 다음 스텝 s10이 구현한다. 다른 Unity 코드는 건드리지 마라.
+      만들지 마라: 타원 모서리, 둥근 클립. 이유: 원형 모서리 SDF(s10)로 v1을 충분히 표현한다.
+
+      테스트(dotnet/Xamlity.Core.Tests/Rendering/CornerRadiusTests.cs 또는 BorderRenderingTests.cs): 구조체 동등성·ToString, 변환기 정상·오류 입력;
+      균일 두께 2·반지름 8 → 바깥 반지름 9, 안쪽 7과 두 사각형; 두께 0이면 테두리 명령 없이 배경만; BorderBrush만 있으면 테두리만;
+      40x20 Border에 반지름 20(두께 0) → 배경 반지름 10; 비균일 두께의 근사 값; 반지름 0이면 기존 명령 그대로; 중첩 Border 절대 좌표; 변화 없는 Render 할당 0.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Layout/CornerRadius.cs*
+      - unity/Packages/com.loonacia.xamlity/Core/Markup/XamlValueConverter.cs
+      - unity/Packages/com.loonacia.xamlity/Core/Controls/Border.cs
+      - unity/Packages/com.loonacia.xamlity/Core/Rendering/IDrawingContext.cs
+      - unity/Packages/com.loonacia.xamlity/Core/Tree/UIRoot.cs
+      - unity/Packages/com.loonacia.xamlity/Runtime/MeshDrawingContext.cs
+      - dotnet/Xamlity.Core.Tests/Rendering/*
+      - dotnet/Xamlity.Core.Tests/Markup/*
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s10-unity-rounded-rect
+    title: draw rounded rectangles with an SDF solid shader
+    type: feat
+    scope: unity
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/ARCHITECTURE.md (레이어 규칙의 메시 배치·셰이더), unity/Packages/com.loonacia.xamlity/Runtime/MeshDrawingContext.cs
+      (s6 불투명도, s7 CPU 클립, s8 배율), Runtime/Shaders/XamlitySolid.shader, XamlityText.shader, Runtime/XamlityRendererFeature.cs,
+      Core/Rendering/IDrawingContext.cs, Core/Controls/Border.cs (s9의 반지름 규칙), Tests/Editor/RenderingTests.cs.
+
+      1. MeshDrawingContext.DrawRoundedRectangle / DrawRoundedBorder: 바깥 사각형을 덮는 쿼드 하나를 solid 배치에 넣는다. 기존 Xamlity/Solid 머티리얼을 쓴다.
+         이유: 둥근 사각형과 일반 사각형이 번갈아 나와도 배치가 끊기지 않게 한다. 모양 정보는 정점 UV 채널(TEXCOORD1~4, Vector4)로 넘긴다:
+         바깥 사각형 중심 기준 로컬 픽셀 좌표와 바깥 반폭·반높이, 바깥 네 반지름, 안쪽 사각형의 중심 오프셋과 반폭·반높이(안쪽이 없으면 그렇게 표시),
+         안쪽 네 반지름. 모든 값은 s8 배율을 적용한 픽셀 단위다. DrawRectangle과 글리프 쿼드는 이 채널을 "모양 없음"으로 채운다.
+         모든 정점이 같은 채널을 갖게 하고 리스트는 재사용한다.
+      2. Xamlity/Solid 셰이더: 모양 정보가 없으면 지금처럼 커버리지 1이다(기존 픽셀 결과 불변). 있으면 모서리별 반지름을 쓰는 rounded box SDF로
+         바깥 커버리지 = saturate(0.5 − d_outer), 안쪽이 있으면 × saturate(0.5 + d_inner)(1픽셀 안티에일리어싱)를 알파에 곱한다. Xamlity/Text는 바꾸지 마라.
+      3. s7 CPU 클립이 모양 쿼드에도 맞게 동작해야 한다: 쿼드를 자를 때 로컬 좌표 채널을 위치와 같은 양만큼 옮긴다. 나머지 모양 채널은 그대로 둔다.
+         불투명도(s6)는 정점 알파로 그대로 적용된다.
+      만들지 마라: 타원 모서리, 그림자, 그라디언트. 이유: PRD 범위 밖이다.
+
+      테스트(RenderingTests.cs, 필요하면 픽스처 Tests/Editor/TestAssets/RoundedBorder.xaml):
+      - MeshDrawingContext 단위: 둥근 쿼드의 정점 4개와 채널 값, 사각형·글리프 정점의 "모양 없음" 채널, 둥근 사각형이 앞뒤 사각형과 같은 solid 배치에 묶임,
+        클립된 둥근 쿼드의 로컬 좌표가 위치와 함께 옮겨짐, 배율 2에서 반지름도 2배.
+      - 픽셀(256x128, 검정 배경, 배율 1, UI 좌표 (x, y)는 텍스처에서 (x, 127 − y)): 왼쪽 위 64x64 Border, Background 빨강, CornerRadius 16 —
+        중심 빨강, UI (1,1) 검정, 위 변 중앙 UI (32,0) 빨강. BorderThickness 4·BorderBrush 흰색·Background 빨강·CornerRadius 16 — UI (32,2) 흰색,
+        UI (32,10) 빨강, UI (1,1) 검정.
+      - 기존 빨강 띠·회색·한글·불투명도·클립 픽셀 테스트와 할당 0 테스트가 기대값을 바꾸지 않고 통과.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Runtime/MeshDrawingContext.cs
+      - unity/Packages/com.loonacia.xamlity/Runtime/Shaders/XamlitySolid.shader
+      - unity/Packages/com.loonacia.xamlity/Tests/Editor/RenderingTests.cs
+      - unity/Packages/com.loonacia.xamlity/Tests/Editor/TestAssets/RoundedBorder.xaml*
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s11-core-image
+    title: add Image with Stretch and DrawImage
+    type: feat
+    scope: core
+    description: |
+      먼저 읽을 파일: docs/PRD.md (핵심 기능 4의 Image), docs/ADR.md (ADR-004), unity/Packages/com.loonacia.xamlity/Core/Rendering/FontHandle.cs,
+      IDrawingContext.cs, Core/Controls/TextBlock.cs (DP와 측정 패턴), Core/Tree/FrameworkElement.cs (s7 레이아웃 클립), UIRoot.cs,
+      Core/Markup/XamlValueConverter.cs, Runtime/MeshDrawingContext.cs, dotnet/Xamlity.Core.Tests/Rendering/*.
+
+      1. Core/Rendering/ImageSource.cs: `public abstract class ImageSource { public abstract double Width { get; } public abstract double Height { get; } }`
+         (논리 픽셀, WPF ImageSource와 같은 이름). 엔진 어댑터가 상속한다(s12).
+         Core/Rendering/Stretch.cs: `Stretch { None, Fill, Uniform, UniformToFill }` (WPF System.Windows.Media.Stretch와 같은 멤버·순서).
+      2. IDrawingContext `void DrawImage(ImageSource imageSource, Rect rectangle)` (WPF DrawingContext.DrawImage와 같은 시그니처). OffsetDrawingContext는 절대 좌표로 전달.
+      3. Core/Controls/Image.cs `public class Image : FrameworkElement`: DP `Source` (ImageSource, null, AffectsMeasure|AffectsRender), `Stretch` (기본 Uniform, AffectsMeasure).
+         WPF Image.MeasureArrangeHelper + Viewbox.ComputeScaleFactor(StretchDirection.Both)와 같은 계산: Source가 없으면 (0,0). 크기 = (Source.Width, Source.Height) × 배율.
+         Stretch가 None이 아니고 제약이 한쪽이라도 유한하면 sx = 제약 폭 / 폭, sy = 제약 높이 / 높이(콘텐츠 크기가 0이면 0). 폭이 무한대면 sx = sy,
+         높이가 무한대면 sy = sx, 둘 다 유한하면 Uniform은 min, UniformToFill은 max, Fill은 각각. 그 밖에는 배율 1.
+         MeasureOverride는 availableSize로, ArrangeOverride는 finalSize로 같은 계산을 한다. OnRender: Source가 있으면 `DrawImage(Source, new Rect(0, 0, RenderSize))`.
+         UniformToFill로 슬롯보다 커진 부분은 s7 레이아웃 클립이 자른다(Stretch 정렬은 WPF처럼 넘치면 왼쪽 위 기준).
+      4. XAML의 `Source="..."` 문자열은 아직 변환하지 않는다(기존 "Cannot convert text to type" 오류 그대로). 에셋 경로 해석은 s13이다.
+      5. Runtime/MeshDrawingContext.cs에 DrawImage를 빈 본문으로 추가해 Unity 컴파일을 유지한다. s12가 구현한다. 다른 Unity 코드는 건드리지 마라.
+      만들지 마라: StretchDirection, ImageBrush, BitmapImage 같은 ImageSource 구현, 9-slice 프로퍼티. 이유: PRD 범위 밖이고, 9-slice는 Sprite 에셋의 border로
+      어댑터가 처리한다(s12). ADR-004: WPF에 없는 프로퍼티를 만들지 않는다.
+
+      테스트 dotnet/Xamlity.Core.Tests/Rendering/ImageTests.cs (테스트 전용 FakeImageSource 100x50):
+      None → 100x50; 200x200 슬롯에서 Fill → 200x200, Uniform → 200x100, UniformToFill → RenderSize 400x200이고 PushClip (0,0,200,200);
+      Height 80인 가로 StackPanel 안 Uniform → 160x80; 크기 0 소스; Source null이면 (0,0)이고 명령 없음; Source·Stretch 변경이 재측정을 일으킴;
+      Border 안 Image의 DrawImage 절대 좌표; 변화 없는 Render 할당 0. Image 요소를 XAML로 만들 수 있음(Source 없이).
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Rendering/ImageSource.cs*
+      - unity/Packages/com.loonacia.xamlity/Core/Rendering/Stretch.cs*
+      - unity/Packages/com.loonacia.xamlity/Core/Rendering/IDrawingContext.cs
+      - unity/Packages/com.loonacia.xamlity/Core/Controls/Image.cs*
+      - unity/Packages/com.loonacia.xamlity/Core/Tree/UIRoot.cs
+      - unity/Packages/com.loonacia.xamlity/Runtime/MeshDrawingContext.cs
+      - dotnet/Xamlity.Core.Tests/Rendering/*
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s12-unity-image-render
+    title: draw textures and 9-slice sprites for Image
+    type: feat
+    scope: unity
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/ADR.md (ADR-001: UnityEngine.UI 금지, ADR-009), docs/ARCHITECTURE.md (레이어 규칙), unity/Packages/com.loonacia.xamlity/Core/Rendering/ImageSource.cs,
+      Core/Controls/Image.cs, Runtime/MeshDrawingContext.cs, XamlityRendererFeature.cs, Runtime/Shaders/*.shader,
+      Tests/Editor/RenderingTests.cs (CreateCamera의 피처·셰이더 검사), unity/Assets/Settings/PC_Renderer.asset, Mobile_Renderer.asset.
+
+      1. Runtime/UnityImageSource.cs: `public sealed class UnityImageSource : ImageSource`, ctor `(Texture2D texture)`, `(Sprite sprite)` (null이면 ArgumentNullException),
+         읽기 프로퍼티 `Texture`, `Sprite`. Width/Height는 Sprite면 `sprite.rect` 크기, 아니면 텍스처 크기(텍스처 픽셀 = 논리 픽셀).
+      2. MeshDrawingContext.DrawImage: Source가 UnityImageSource가 아니면 그리지 않는다. 배치 키에 종류(solid/text/image)를 넣고 image 배치는 텍스처별로 묶는다.
+         정점 색은 흰색 × 현재 불투명도. Texture2D는 UV (0,0)~(1,1). Sprite는 `sprite.texture`와 `UnityEngine.Sprites.DataUtility.GetOuterUV(sprite)`
+         (아틀라스에 패킹된 스프라이트 포함). `sprite.border`(x 왼쪽, y 아래, z 오른쪽, w 위, 스프라이트 픽셀)가 0이 아니면 9-slice:
+         가장자리 크기는 border(논리 픽셀 × s8 배율)로 유지하고 가운데와 변을 늘린다. 안쪽 UV는 `DataUtility.GetInnerUV`. 대상 폭이 왼쪽+오른쪽보다 작으면
+         두 값을 비율대로 줄인다(높이도 같음, uGUI Sliced와 같은 결과). 크기 0인 조각은 만들지 않는다. s7 CPU 클립과 s8 배율이 이미지 쿼드에도 적용된다.
+         UnityEngine.UI를 참조하지 마라(ADR-001). DataUtility는 UnityEngine.CoreModule의 UnityEngine.Sprites 네임스페이스다.
+      3. Runtime/Shaders/XamlityImage.shader (`Xamlity/Image`): 텍스처 샘플 × 정점 색. 정점 색은 다른 셰이더처럼 Linear 프로젝트에서 sRGB → linear.
+         블렌드·깊이·컬 설정은 Xamlity/Solid와 같다. XamlityRendererFeature에 `[SerializeField] private Shader imageShader`와 머티리얼을 추가하고
+         image 배치는 `_MainTex`를 MaterialPropertyBlock으로 넘긴다. 샘플 렌더러 에셋 두 개에 셰이더를 연결한다(YAML 직접 수정 가능).
+         RenderingTests.CreateCamera의 셰이더 검사에 imageShader를 추가한다.
+      4. docs/ARCHITECTURE.md 레이어 규칙의 셰이더 문장에 이미지는 `Xamlity/Image`를 쓴다고 추가한다.
+      만들지 마라: Tiled·Filled 같은 uGUI Image 모드, 스프라이트 메시(Tight) 그리기, 텍스처 로딩. 이유: PRD 범위 밖이다.
+
+      테스트(Tests/Editor/ImageRenderingTests.cs, 기존 RenderingTests의 카메라·픽셀 도우미는 복사하지 말고 공유할 수 있게 옮기거나 같은 클래스에 추가한다):
+      메모리 텍스처(`new Texture2D`, Point 필터)와 `Sprite.Create(texture, rect, pivot, 100, 0, SpriteMeshType.FullRect, border)`를 쓴다.
+      - 단위: Texture2D 쿼드 UV; 텍스처 일부 rect로 만든 Sprite의 UV; border (4,4,4,4)인 16x16 Sprite를 64x32로 그리면 쿼드 9개와 기대 위치·UV;
+        대상 6x6이면 가장자리 축소; 이미지가 solid·text와 다른 배치이고 같은 텍스처가 연속하면 묶임; 불투명도 알파; 클립된 이미지 UV; 배율 2.
+      - 픽셀: 왼쪽 픽셀 빨강·오른쪽 픽셀 초록인 2x1 텍스처를 Image(Stretch=Fill, 64x32, 왼쪽 위)로 그리면 x < 32 빨강, 32 ≤ x < 64 초록, 그 밖은 검정.
+        가장자리와 가운데 색이 다른 9-slice 스프라이트 픽셀 하나. 변화 없는 Refresh 할당 0.
+      - 테스트가 만든 텍스처·스프라이트는 TearDown에서 정리한다.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Runtime/UnityImageSource.cs*
+      - unity/Packages/com.loonacia.xamlity/Runtime/MeshDrawingContext.cs
+      - unity/Packages/com.loonacia.xamlity/Runtime/XamlityRendererFeature.cs
+      - unity/Packages/com.loonacia.xamlity/Runtime/Shaders/XamlityImage.shader*
+      - unity/Packages/com.loonacia.xamlity/Tests/Editor/RenderingTests.cs
+      - unity/Packages/com.loonacia.xamlity/Tests/Editor/ImageRenderingTests.cs*
+      - unity/Assets/Settings/PC_Renderer.asset
+      - unity/Assets/Settings/Mobile_Renderer.asset
+      - docs/ARCHITECTURE.md
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s13-editor-image-assets
+    title: resolve Image source asset paths at import time
+    type: feat
+    scope: editor
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/PRD.md (핵심 기능 1: 잘못된 에셋 경로는 임포트 오류), docs/ADR.md (ADR-003의 의존성 규칙, ADR-011의 OnImportAsset 금지 사항),
+      docs/ARCHITECTURE.md (데이터 흐름 > 에디터: 임포트), unity/Packages/com.loonacia.xamlity/Core/Markup/XamlParser.cs, XamlParseResult.cs, XamlBuilder.cs,
+      XamlValueConverter.cs, Runtime/XamlAsset.cs, Runtime/UnityImageSource.cs (s12), Editor/XamlImporter.cs, Tests/Editor/XamlImporterTests.cs (임시 폴더 방식).
+
+      설계: IR에는 원문 문자열(경로)을 그대로 두고, XamlAsset이 "원문 값 → UnityEngine.Object" 참조 테이블을 갖는다. 런타임 빌더는 주입된 해석기로
+      원문 값을 ImageSource로 바꾼다. 이유: ARCHITECTURE의 "값은 파서가 보존한 원문 문자열" 규칙과 IR 형식(v2)을 그대로 유지한다.
+      docs/ARCHITECTURE.md 데이터 흐름의 "에셋 경로 → UnityEngine.Object 참조 (IR 안에서는 인덱스)"를 이 설계로 고친다.
+      1. Core/Markup:
+         - `public interface IXamlAssetResolver { ImageSource ResolveImage(string value); }`
+         - `XamlBuilder.Build(XamlDocument document, IXamlAssetResolver assetResolver)` 오버로드(기존 `Build(document)`는 null 해석기).
+           ImageSource 타입 프로퍼티는 해석기로 값을 만든다. 해석기가 null이면 XamlBuildException(줄·열).
+         - 파서: ImageSource 타입 속성 값은 비어 있지 않고 마크업 확장이 아니면 통과시키고(빈 값은 오류), `XamlParseResult.AssetReferences`
+           (`IReadOnlyList<XamlAssetReference>`, 항목 `string Value`, `int Line`, `int Column`)에 문서 순서로 기록한다. 존재 확인은 Core가 하지 않는다(엔진 정보가 없다).
+      2. Editor/XamlImporter: 파싱 오류가 없으면 참조마다 경로를 해석한다. `Assets/`나 `Packages/`로 시작하면 프로젝트 경로, 아니면 XAML 파일이 있는 폴더 기준
+         상대 경로('/' 구분, `./`·`../` 정규화). `/`로 시작하거나 `:`가 들어간 URI 형식이면 오류.
+         `AssetDatabase.LoadAllAssetsAtPath`로 읽은 객체에서 고르는 규칙은 테스트 가능한 internal static 함수로 분리한다(예: `TrySelectImageAsset(Object[] assets,
+         out Object selected, out string error)`): Sprite가 정확히 하나면 그 Sprite, Sprite가 없고 메인이 Texture2D면 텍스처, Sprite가 여러 개면 오류
+         (스프라이트 시트는 지원하지 않음), 에셋이 없거나 다른 타입이면 오류.
+         오류 형식은 기존과 같은 `파일(줄,열): 메시지`이고, 오류가 하나라도 있으면 IR 없는 XamlAsset을 넣는다(기존 규칙).
+         참조한 경로마다 의존성을 등록한다: 에셋이 있으면 `ctx.DependsOnArtifact(path)`, 없으면 `ctx.DependsOnSourceAsset(path)` (나중에 그 에셋이 생기면 재임포트되도록, ADR-003).
+         같은 원문 값은 테이블에 한 번만 넣는다. OnImportAsset 안에서 파일을 쓰거나 CreateAsset/ImportAsset을 부르지 마라(ADR-011).
+      3. Runtime/XamlAsset: `[SerializeField] private string[] assetKeys`, `[SerializeField] private Object[] assets`,
+         `internal void Initialize(byte[] ir, string[] assetKeys, Object[] assets)`(기존 1인자 Initialize는 이 시그니처로 바꾸고 호출부를 고친다).
+         Build()는 테이블로 `UnityImageSource`를 만드는 해석기를 넘긴다. 테이블에 없거나 참조가 끊긴(null) 값은 `Debug.LogWarning` 후 Source null.
+      만들지 마라: 스프라이트 시트의 이름 선택 문법, URI(pack://) 지원, FontFamily 에셋 참조, 런타임 경로 로딩(Resources/Addressables). 이유: 이 계획 범위 밖이다.
+
+      테스트:
+      - Core(dotnet Markup 테스트): AssetReferences 기록과 줄·열, 빈 값 오류, 해석기 호출과 결과 설정, 해석기 없이 Build하면 XamlBuildException.
+      - Unity(XamlImporterTests.cs): 테스트가 `Assets/XamlityTestTemp/`에 PNG(Texture2D.EncodeToPNG)를 쓰고 TextureImporter로 Sprite(Single, border)로 설정해 임포트한 뒤
+        상대 경로와 `Assets/...` 경로 모두 HasIr이고 Build한 Image.Source가 그 Sprite의 UnityImageSource; Sprite가 아닌 텍스처는 Texture;
+        없는 경로와 `/abs.png`는 줄·열이 있는 오류이고 HasIr false; 선택 함수에 메모리 Sprite 두 개를 넘기면 여러 Sprite 오류;
+        없는 경로를 참조하던 XAML은 그 경로에 PNG를 만들고 `AssetDatabase.Refresh()` 하면 다시 임포트되어 HasIr이 된다.
+        자동 재임포트가 되지 않으면 테스트를 약화하지 말고 blockers에 적는다. TearDown에서 임시 폴더를 지운다.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Markup/*
+      - unity/Packages/com.loonacia.xamlity/Runtime/XamlAsset.cs
+      - unity/Packages/com.loonacia.xamlity/Editor/XamlImporter.cs
+      - unity/Packages/com.loonacia.xamlity/Tests/Editor/XamlImporterTests.cs
+      - dotnet/Xamlity.Core.Tests/Markup/*
+      - docs/ARCHITECTURE.md
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s14-sample-hud
+    title: add HUD sample scene using grid, canvas, images, and rounded borders
+    type: feat
+    scope: sample
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/PRD.md (핵심 기능 3, 4, 12의 수동 확인), unity/Assets/Samples/Hello/Hello.xaml, unity/Assets/Scenes/SampleScene.unity,
+      unity/Packages/com.loonacia.xamlity/Tests/Editor/SampleSetupTests.cs, Runtime/XamlityRoot.cs, 이 계획에서 추가된 Core 타입
+      (Core/Layout/Grid.cs, Canvas.cs, Core/Controls/Image.cs, TextBlock.cs, Border.cs, Core/Tree/UIElement.cs).
+
+      이 계획의 기능을 한 화면에서 보여 주는 샘플을 만든다. 기존 Hello 샘플과 SampleScene은 바꾸지 마라. 이유: SampleSetupTests가 그 구성을 검증한다.
+      1. unity/Assets/Samples/Hud/Panel.png: 9-slice용 작은 패널 텍스처(예: 48x48, 가장자리 12px 밝은 테두리, 반투명 어두운 가운데).
+         일회성 batchmode 스크립트(`unity run` + `-executeMethod`)로 만들어도 되며 그 스크립트는 커밋하지 말고 지운다.
+         .meta에서 Sprite(Single), spriteBorder (12,12,12,12), mipmap 없음.
+      2. unity/Assets/Samples/Hud/Hud.xaml: 기준 해상도 1920x1080에서 보기 좋은 HUD. 반드시 포함: Grid(행 Auto/*/Auto, Pixel·Auto·star 열, ColumnSpan 하나),
+         위쪽 바의 CornerRadius·BorderThickness가 있는 Border 패널과 한글·영문 TextBlock(예: "HP 120 / 150"), Image(Source="Panel.png" 상대 경로, Stretch=Fill)
+         배경 위 퀘스트 설명(긴 한글 문장, TextWrapping=Wrap, TextAlignment 하나 이상), Canvas로 절대 위치를 준 표식, Opacity가 1보다 작은 요소,
+         ClipToBounds로 넘친 텍스트를 자르는 상자.
+      3. unity/Assets/Scenes/HudSample.unity: SampleScene과 같은 URP 카메라 설정의 Main Camera와 XamlityRoot(xaml = Hud.xaml, 기준 해상도 1920x1080).
+         씬도 일회성 batchmode 스크립트로 만들어도 된다(커밋하지 않음).
+      4. 테스트 SampleSetupTests.cs에 추가: Hud.xaml이 HasIr이고 Build 성공, 트리에 Grid·Canvas·Image가 있고 Image.Source가 Panel.png Sprite의 UnityImageSource이며
+         그 Sprite border가 0이 아님, HudSample 씬에 Hud.xaml을 참조하는 XamlityRoot가 있음(Additive로 열고 테스트 끝에 닫는다).
+      화면이 실제로 의도대로 보이는지는 사람이 Play 모드에서 확인한다. summary에 확인 방법(씬 이름, 기대 화면, Game 뷰 해상도를 바꿔도 배치 비율이 유지되는지)을 적는다.
+    expected_files:
+      - unity/Assets/Samples/Hud*
+      - unity/Assets/Scenes/HudSample.unity*
+      - unity/Packages/com.loonacia.xamlity/Tests/Editor/SampleSetupTests.cs
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
