@@ -1,0 +1,15 @@
+{
+  "name": "Xamlity.Editor.Tests",
+  "rootNamespace": "Xamlity.Editor.Tests",
+  "includePlatforms": ["Editor"],
+  "defineConstraints": ["UNITY_INCLUDE_TESTS"],
+  "overrideReferences": true,
+  "precompiledReferences": ["nunit.framework.dll"],
+  "references": [
+    "Xamlity.Core",
+    "Xamlity.Unity",
+    "Xamlity.Editor",
+    "UnityEngine.TestRunner",
+    "UnityEditor.TestRunner"
+  ]
+}

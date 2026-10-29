@@ -1,0 +1,6 @@
+{
+  "name": "Xamlity.Editor",
+  "rootNamespace": "Xamlity.Editor",
+  "includePlatforms": ["Editor"],
+  "references": ["Xamlity.Core", "Xamlity.Unity"]
+}

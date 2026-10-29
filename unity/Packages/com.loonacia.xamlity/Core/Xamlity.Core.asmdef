@@ -1,0 +1,6 @@
+{
+  "name": "Xamlity.Core",
+  "rootNamespace": "Xamlity",
+  "references": [],
+  "noEngineReferences": true
+}

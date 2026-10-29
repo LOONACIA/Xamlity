@@ -1,0 +1,10 @@
+{
+  "name": "Xamlity.Unity",
+  "rootNamespace": "Xamlity.Unity",
+  "references": [
+    "Xamlity.Core",
+    "Unity.RenderPipelines.Core.Runtime",
+    "Unity.RenderPipelines.Universal.Runtime",
+    "Unity.TextMeshPro"
+  ]
+}

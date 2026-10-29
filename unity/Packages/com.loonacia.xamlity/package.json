@@ -1,0 +1,10 @@
+{
+  "name": "com.loonacia.xamlity",
+  "displayName": "Xamlity",
+  "version": "0.1.0",
+  "unity": "6000.5",
+  "dependencies": {
+    "com.unity.render-pipelines.universal": "17.5.0",
+    "com.unity.ugui": "2.5.0"
+  }
+}

@@ -1,5 +1,14 @@
 {
   "dependencies": {
+    "com.loonacia.xamlity": {
+      "version": "file:com.loonacia.xamlity",
+      "depth": 0,
+      "source": "embedded",
+      "dependencies": {
+        "com.unity.render-pipelines.universal": "17.5.0",
+        "com.unity.ugui": "2.5.0"
+      }
+    },
     "com.unity.ai.navigation": {
       "version": "2.0.13",
       "depth": 0,
