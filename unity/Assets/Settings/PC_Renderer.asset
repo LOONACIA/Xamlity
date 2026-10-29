@@ -109,3 +109,4 @@ MonoBehaviour:
   m_Active: 1
   solidShader: {fileID: 4800000, guid: ee29d37d8b2e45e1b239d46ca79f346a, type: 3}
   textShader: {fileID: 4800000, guid: 84f369029ede41e79010824b5f8d83dd, type: 3}
+  imageShader: {fileID: 4800000, guid: 486518bd50c24ce6be17de2be127ca21, type: 3}

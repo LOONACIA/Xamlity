@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.Rendering;
+using UnityEngine.Sprites;
 using Xamlity.Rendering;
 using CornerRadius = Xamlity.Layout.CornerRadius;
 using Point = Xamlity.Layout.Point;
@@ -12,6 +13,8 @@ namespace Xamlity.Unity
 {
     internal sealed class MeshDrawingContext : IDrawingContext
     {
+        private static readonly SolidColorBrush imageBrush = new SolidColorBrush(
+            Xamlity.Rendering.Color.FromRgb(255, 255, 255));
         private readonly List<Vector3> vertices = new List<Vector3>();
         private readonly List<Color32> colors = new List<Color32>();
         private readonly List<Vector2> uvs = new List<Vector2>();
@@ -42,16 +45,19 @@ namespace Xamlity.Unity
             internal Rect? Clip { get; }
         }
 
-        // Null texture selects the solid material; every atlas uses the shared text material.
+        internal enum BatchKind { Solid, Text, Image }
+
         internal readonly struct Batch
         {
-            internal Batch(Texture texture, int start, int count)
+            internal Batch(BatchKind kind, Texture texture, int start, int count)
             {
+                Kind = kind;
                 Texture = texture;
                 Start = start;
                 Count = count;
             }
 
+            internal BatchKind Kind { get; }
             internal Texture Texture { get; }
             internal int Start { get; }
             internal int Count { get; }
@@ -79,6 +85,40 @@ namespace Xamlity.Unity
 
         public void DrawImage(ImageSource imageSource, Rect rectangle)
         {
+            if (!(imageSource is UnityImageSource source) || rectangle.Width <= 0 || rectangle.Height <= 0)
+                return;
+
+            Sprite sprite = source.Sprite;
+            Vector4 outer = sprite != null ? DataUtility.GetOuterUV(sprite) : new Vector4(0, 0, 1, 1);
+            Vector4 border = sprite != null ? sprite.border : Vector4.zero;
+            if (border.Equals(Vector4.zero))
+            {
+                AddQuad(imageBrush, rectangle, source.Texture, new Vector2(outer.x, outer.y),
+                    new Vector2(outer.z, outer.w), BatchKind.Image);
+                return;
+            }
+
+            Vector4 inner = DataUtility.GetInnerUV(sprite);
+            double horizontalScale = border.x + border.z > rectangle.Width
+                ? rectangle.Width / (border.x + border.z) : 1;
+            double verticalScale = border.y + border.w > rectangle.Height
+                ? rectangle.Height / (border.y + border.w) : 1;
+            Span<double> x = stackalloc double[] { rectangle.Left, rectangle.Left + border.x * horizontalScale,
+                rectangle.Right - border.z * horizontalScale, rectangle.Right };
+            Span<double> y = stackalloc double[] { rectangle.Top, rectangle.Top + border.w * verticalScale,
+                rectangle.Bottom - border.y * verticalScale, rectangle.Bottom };
+            var u = new Vector4(outer.x, inner.x, inner.z, outer.z);
+            var v = new Vector4(outer.w, inner.w, inner.y, outer.y);
+            for (int row = 0; row < 3; row++)
+                for (int column = 0; column < 3; column++)
+                {
+                    double width = x[column + 1] - x[column];
+                    double height = y[row + 1] - y[row];
+                    if (width <= 0 || height <= 0)
+                        continue;
+                    AddQuad(imageBrush, new Rect(x[column], y[row], width, height), source.Texture,
+                        new Vector2(u[column], v[row + 1]), new Vector2(u[column + 1], v[row]), BatchKind.Image);
+                }
         }
 
         public void PushClip(Rect clipRect)
@@ -142,7 +182,7 @@ namespace Xamlity.Unity
                 radii = ScaleRadii(innerCornerRadius);
             }
             AddQuad(solid, outerRectangle, null, Vector2.zero, Vector2.zero,
-                true, ScaleRadii(outerCornerRadius), inner, radii);
+                BatchKind.Solid, true, ScaleRadii(outerCornerRadius), inner, radii);
         }
 
         private Vector4 ScaleRadii(CornerRadius radius) => new Vector4(
@@ -150,7 +190,7 @@ namespace Xamlity.Unity
             (float)(radius.BottomRight * coordinateScale), (float)(radius.BottomLeft * coordinateScale));
 
         private void AddQuad(SolidColorBrush solid, Rect rect, Texture texture, Vector2 uvMin, Vector2 uvMax,
-            bool hasShape = false, Vector4 outerRadius = default, Vector4 innerRectangle = default,
+            BatchKind kind = BatchKind.Solid, bool hasShape = false, Vector4 outerRadius = default, Vector4 innerRectangle = default,
             Vector4 innerRadius = default)
         {
             Rect outerRectangle = rect;
@@ -175,13 +215,14 @@ namespace Xamlity.Unity
                 rect = new Rect(leftEdge, topEdge, rightEdge - leftEdge, bottomEdge - topEdge);
             }
 
-            if (batches.Count != 0 && batches[batches.Count - 1].Texture == texture)
+            if (batches.Count != 0 && batches[batches.Count - 1].Kind == kind &&
+                batches[batches.Count - 1].Texture == texture)
             {
                 var previous = batches[batches.Count - 1];
-                batches[batches.Count - 1] = new Batch(texture, previous.Start, previous.Count + 6);
+                batches[batches.Count - 1] = new Batch(kind, texture, previous.Start, previous.Count + 6);
             }
             else
-                batches.Add(new Batch(texture, indices.Count, 6));
+                batches.Add(new Batch(kind, texture, indices.Count, 6));
 
             int first = vertices.Count;
             // Scale the clipped logical edges before converting to bottom-left pixel coordinates.
@@ -264,7 +305,7 @@ namespace Xamlity.Unity
                         (atlasRect.y - padding) / (float)atlas.height);
                     var uvMax = new Vector2((atlasRect.x + atlasRect.width + padding) / (float)atlas.width,
                         (atlasRect.y + atlasRect.height + padding) / (float)atlas.height);
-                    AddQuad(solid, rect, atlas, uvMin, uvMax);
+                    AddQuad(solid, rect, atlas, uvMin, uvMax, BatchKind.Text);
                 }
                 advance += glyphRun.AdvanceWidths[i];
             }

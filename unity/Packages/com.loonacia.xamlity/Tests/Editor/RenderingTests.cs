@@ -20,7 +20,7 @@ using Point = Xamlity.Layout.Point;
 
 namespace Xamlity.Editor.Tests
 {
-    public class RenderingTests
+    public partial class RenderingTests
     {
         private const string TopBandPath = "Packages/com.loonacia.xamlity/Tests/Editor/TestAssets/TopBand.xaml";
         private const string KoreanTextPath = "Packages/com.loonacia.xamlity/Tests/Editor/TestAssets/KoreanText.xaml";
@@ -69,6 +69,9 @@ namespace Xamlity.Editor.Tests
                 if (material != null)
                     Object.DestroyImmediate(material);
             }
+            for (int i = imageObjects.Count - 1; i >= 0; i--)
+                Object.DestroyImmediate(imageObjects[i]);
+            imageObjects.Clear();
         }
 
         [TestCase(1024)]
@@ -1176,6 +1179,8 @@ namespace Xamlity.Editor.Tests
                 "XamlityRendererFeature must reference the Xamlity/Solid shader.");
             Assert.That(serialized.FindProperty("textShader").objectReferenceValue, Is.Not.Null,
                 "XamlityRendererFeature must reference the Xamlity/Text shader.");
+            Assert.That(serialized.FindProperty("imageShader").objectReferenceValue, Is.Not.Null,
+                "XamlityRendererFeature must reference the Xamlity/Image shader.");
             return camera;
         }
 
