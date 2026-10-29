@@ -9,12 +9,22 @@ namespace Xamlity.Tree
         private readonly OffsetDrawingContext offsetDrawingContext = new OffsetDrawingContext();
 
         public UIRoot(UIElement rootElement)
+            : this(rootElement, null, default)
+        {
+        }
+
+        public UIRoot(UIElement rootElement, ITextMeasurer textMeasurer, FontHandle defaultFont)
         {
             RootElement = rootElement ?? throw new ArgumentNullException(nameof(rootElement));
+            TextMeasurer = textMeasurer;
+            DefaultFont = defaultFont;
             RootElement.Root = this;
+            RootElement.InvalidateSubtreeMeasure();
         }
 
         public UIElement RootElement { get; }
+        public ITextMeasurer TextMeasurer { get; }
+        public FontHandle DefaultFont { get; }
         public bool IsRenderDirty { get; private set; } = true;
 
         public void UpdateLayout(Size viewportSize)
@@ -51,6 +61,12 @@ namespace Xamlity.Tree
             {
                 Target.DrawRectangle(brush,
                     new Rect(rect.X + Offset.X, rect.Y + Offset.Y, rect.Width, rect.Height));
+            }
+
+            public void DrawGlyphRun(Brush foreground, GlyphRun glyphRun, Point baselineOrigin)
+            {
+                Target.DrawGlyphRun(foreground, glyphRun,
+                    new Point(baselineOrigin.X + Offset.X, baselineOrigin.Y + Offset.Y));
             }
         }
     }

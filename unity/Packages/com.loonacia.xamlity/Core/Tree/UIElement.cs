@@ -19,6 +19,22 @@ namespace Xamlity.Tree
         public UIElement VisualParent { get; private set; }
         internal UIRoot Root { get; set; }
 
+        internal UIRoot GetRoot()
+        {
+            UIElement element = this;
+            while (element.VisualParent != null)
+                element = element.VisualParent;
+            return element.Root;
+        }
+
+        internal void InvalidateSubtreeMeasure()
+        {
+            IsMeasureValid = false;
+            IsArrangeValid = false;
+            for (int index = 0; index < VisualChildrenCount; index++)
+                GetVisualChild(index).InvalidateSubtreeMeasure();
+        }
+
         public void Measure(Size availableSize)
         {
             if (IsMeasureValid && availableSize == previousAvailableSize)
@@ -106,6 +122,7 @@ namespace Xamlity.Tree
             }
 
             child.VisualParent = this;
+            child.InvalidateSubtreeMeasure();
             child.OnInheritanceParentChanged(null);
             InvalidateMeasure();
             InvalidateVisual();
@@ -119,6 +136,7 @@ namespace Xamlity.Tree
                 throw new InvalidOperationException("The element is not a visual child of this parent.");
 
             child.VisualParent = null;
+            child.InvalidateSubtreeMeasure();
             child.OnInheritanceParentChanged(this);
             InvalidateMeasure();
             InvalidateVisual();

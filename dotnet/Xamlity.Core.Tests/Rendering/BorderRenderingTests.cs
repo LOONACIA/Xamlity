@@ -277,6 +277,10 @@ namespace Xamlity.Core.Tests.Rendering
 
         private sealed class EmptyDrawingContext : IDrawingContext
         {
+            public void DrawGlyphRun(Brush foreground, GlyphRun glyphRun, Point baselineOrigin)
+            {
+            }
+
             public void DrawRectangle(Brush brush, Rect rect)
             {
             }
