@@ -180,7 +180,7 @@ namespace Xamlity.Core.Tests.Markup
         [TestCase("x:Class=\"View\"", "XAML directive 'x:Class' is not supported.")]
         [TestCase("x:Key=\"key\"", "XAML directive 'x:Key' is not supported.")]
         [TestCase("x:Type=\"Border\"", "XAML directive 'x:Type' is not supported.")]
-        [TestCase("x:DataType=\"View\"", "XAML directive 'x:DataType' is not supported.")]
+        [TestCase("x:DataType=\"View\"", "Unknown element 'View'.")]
         [TestCase("Unknown=\"1\"", "Unknown or read-only property 'Unknown' on type 'Border'.")]
         [TestCase("IsMeasureValid=\"true\"", "Unknown or read-only property 'IsMeasureValid' on type 'Border'.")]
         [TestCase("RenderSize=\"1\"", "Unknown or read-only property 'RenderSize' on type 'Border'.")]

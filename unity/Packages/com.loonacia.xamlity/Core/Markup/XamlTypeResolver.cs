@@ -58,7 +58,7 @@ namespace Xamlity.Markup
                 ?? assembly.GetType("Xamlity.Rendering." + name)
                 ?? assembly.GetType("Xamlity.Data." + name)
                 ?? (requireConstructor ? null : assembly.GetType("Xamlity.Tree." + name));
-            if (type != null && type.IsPublic && type.IsClass && (!requireConstructor || CanCreate(type)))
+            if (type != null && type.IsPublic && (!requireConstructor || CanCreate(type)))
                 return type;
             error = $"Unknown element '{name}'.";
             return null;
@@ -66,6 +66,17 @@ namespace Xamlity.Markup
 
         private static bool CanCreate(Type type) => type.IsVisible && type.IsClass && !type.IsAbstract &&
             !type.IsGenericType && !type.ContainsGenericParameters && type.GetConstructor(Type.EmptyTypes) != null;
+
+        internal static Type ResolveDataType(string xmlNamespace, string name, out string error)
+        {
+            Type type = Resolve(xmlNamespace, name, out error, requireConstructor: false);
+            if (type == null || type.IsVisible)
+                return type;
+            error = TryParseClrNamespace(xmlNamespace, out string clrNamespace, out string assemblyName, out _)
+                ? $"Unknown type '{name}' in namespace '{clrNamespace}' of assembly '{assemblyName}'."
+                : $"Unknown element '{name}'.";
+            return null;
+        }
 
         internal static bool TryParseClrNamespace(string uri, out string clrNamespace, out string assemblyName,
             out string error)

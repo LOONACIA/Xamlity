@@ -97,6 +97,7 @@ Input System → 추상 입력 이벤트 → 히트 테스트 → RoutedEvent �
 
 ## 횡단 관심사
 - **XAML 이름 해석**: 기본 xmlns(`https://github.com/loonacia/xamlity`)는 Core의 `Xamlity.Controls`, `Xamlity.Layout`, `Xamlity.Rendering`, `Xamlity.Data`에서 객체 타입을 찾는다. 사용자 타입은 `clr-namespace:<CLR 네임스페이스>;assembly=<어셈블리 단순 이름>`으로 매핑하며 `assembly=`는 필수다. 프로퍼티 요소의 Owner는 해당 요소의 XML 네임스페이스에서 해석하고 대상 타입 또는 그 기반 타입이어야 한다. `XamlParseResult.ReferencedAssemblies`는 사용 여부와 관계없이 선언된 매핑의 어셈블리 이름을 최초 등장 순서로 중복 없이 보존하며 파싱 오류가 있어도 반환한다. IR의 타입 이름과 빌더 해석은 기존 어셈블리 한정 이름을 그대로 사용한다.
+- **x:DataType 검증**: 요소와 자손의 Binding 경로를 선언 타입의 public 인스턴스 프로퍼티로 검증하며 자손의 선언이 범위를 덮어쓴다. DataContext 프로퍼티의 바인딩은 부모 범위의 타입으로 검증하고, 범위에 선언이 없으면 검증하지 않는다. x:DataType은 IR에 저장하지 않으며 런타임 리플렉션 바인딩은 그대로 유지한다.
 - **에러 처리**: XAML 오류는 가능한 한 임포트 시점에 `파일(줄,열): 메시지`로 낸다. 런타임에서 `x:DataType`이 없는 바인딩의 경로를 찾지 못하면 예외 대신 경고 로그를 남긴다(WPF 방식).
 - **로깅**: Core는 `XamlityLog.Logger`로 `IXamlityLogger`를 주입받으며, null이면 로그를 버린다. Unity 어댑터는 이를 `Debug.Log` 계열로 연결한다.
 - **설정**: Project Settings > Xamlity(`XamlitySettings` 에셋)에서 앱 리소스(App.xaml)와 기본 폰트(TMP 폰트 에셋)를 지정한다. 루트마다 다른 값(XAML 에셋, sortingOrder, 기준 해상도)은 `XamlityRoot` 컴포넌트에 둔다.

@@ -63,9 +63,10 @@ namespace Xamlity.Markup
 
             // Starts on an element and leaves the reader on the following node.
             internal XamlObjectNode ReadObject(bool isRoot = false, Type targetType = null,
-                string propertyName = null, bool allowBinding = false)
+                string propertyName = null, bool allowBinding = false, Type parentDataType = null)
             {
                 ReadNamespaceDeclarations();
+                Type dataType = ReadDataType(parentDataType);
                 string name = reader.LocalName;
                 Type type = XamlTypeResolver.Resolve(reader.NamespaceURI, name, out string typeError);
                 var node = new XamlObjectNode { Line = location.LineNumber, Column = location.LinePosition };
@@ -87,7 +88,7 @@ namespace Xamlity.Markup
                 }
 
                 var assigned = new HashSet<string>(StringComparer.Ordinal);
-                ReadAttributes(type, node, assigned);
+                ReadAttributes(type, node, assigned, dataType, parentDataType);
                 string contentName = type?.GetCustomAttribute<ContentPropertyAttribute>(true)?.Name;
                 Type contentType = contentName == null ? null :
                     XamlTypeResolver.ResolveProperty(type, contentName, out _, allowCollections: true);
@@ -97,7 +98,11 @@ namespace Xamlity.Markup
                 bool empty = reader.IsEmptyElement;
                 reader.Read();
                 if (empty)
+                {
+                    if (type == typeof(Binding))
+                        ValidateBindingPath(node, dataType);
                     return node;
+                }
 
                 while (reader.NodeType != XmlNodeType.EndElement && !reader.EOF)
                 {
@@ -105,7 +110,7 @@ namespace Xamlity.Markup
                     {
                         if (reader.LocalName.Contains("."))
                         {
-                            ReadPropertyElement(type, node, assigned);
+                            ReadPropertyElement(type, node, assigned, dataType, parentDataType);
                             continue;
                         }
                         if (type != null && XamlTypeResolver.Resolve(reader.NamespaceURI, reader.LocalName) != typeof(Binding))
@@ -123,7 +128,8 @@ namespace Xamlity.Markup
                             else if (collection == null)
                                 Error($"Content property '{contentName}' accepts only one child.");
                         }
-                        XamlObjectNode child = ReadObject(targetType: childType, propertyName: contentName);
+                        XamlObjectNode child = ReadObject(targetType: childType, propertyName: contentName,
+                            parentDataType: dataType);
                         content?.Objects.Add(child);
                     }
                     else
@@ -136,12 +142,16 @@ namespace Xamlity.Markup
                     }
                 }
                 reader.Read();
+                if (type == typeof(Binding))
+                    ValidateBindingPath(node, dataType);
                 return node;
             }
 
-            private void ReadPropertyElement(Type ownerType, XamlObjectNode owner, HashSet<string> assigned)
+            private void ReadPropertyElement(Type ownerType, XamlObjectNode owner, HashSet<string> assigned,
+                Type dataType, Type parentDataType)
             {
                 ReadNamespaceDeclarations();
+                dataType = ReadDataType(dataType);
                 string name = reader.LocalName;
                 int separator = name.IndexOf('.');
                 string ownerName = name.Substring(0, separator);
@@ -179,7 +189,7 @@ namespace Xamlity.Markup
                 }
 
                 while (reader.MoveToNextAttribute())
-                    if (reader.NamespaceURI != "http://www.w3.org/2000/xmlns/")
+                    if (reader.NamespaceURI != "http://www.w3.org/2000/xmlns/" && !IsDataTypeAttribute())
                         Error("Attributes on property elements are not supported.");
                 reader.MoveToElement();
                 Type collection = XamlTypeResolver.GetCollectionInterface(propertyType);
@@ -198,8 +208,12 @@ namespace Xamlity.Markup
                                 SkipPropertyElement();
                             }
                             else
+                            {
+                                bool isBinding = XamlTypeResolver.Resolve(reader.NamespaceURI, reader.LocalName) == typeof(Binding);
                                 node.Objects.Add(ReadObject(targetType: childType, propertyName: propertyName,
-                                    allowBinding: collection == null && IsBindingTarget(ownerType, dp)));
+                                    allowBinding: collection == null && IsBindingTarget(ownerType, dp),
+                                    parentDataType: isBinding && dp == FrameworkElement.DataContextProperty ? parentDataType : dataType));
+                            }
                         }
                         else
                         {
@@ -248,11 +262,36 @@ namespace Xamlity.Markup
                     reader.Read();
             }
 
-            private void ReadAttributes(Type type, XamlObjectNode node, HashSet<string> assigned)
+            private bool IsDataTypeAttribute() =>
+                reader.NamespaceURI == XamlTypeResolver.XamlNamespace && reader.LocalName == "DataType";
+
+            private Type ReadDataType(Type inheritedType)
+            {
+                if (!reader.MoveToAttribute("DataType", XamlTypeResolver.XamlNamespace))
+                    return inheritedType;
+                string name = reader.Value.Trim();
+                Type type = null;
+                if (name.StartsWith("{", StringComparison.Ordinal))
+                    Error("x:DataType does not support markup extensions; use 'prefix:TypeName'.");
+                else
+                {
+                    int separator = name.IndexOf(':');
+                    string xmlNamespace = reader.LookupNamespace(separator < 0 ? "" : name.Substring(0, separator));
+                    string localName = separator < 0 ? name : name.Substring(separator + 1);
+                    type = XamlTypeResolver.ResolveDataType(xmlNamespace, localName, out string error);
+                    if (type == null && !invalidMappings.Contains(xmlNamespace))
+                        Error(error);
+                }
+                reader.MoveToElement();
+                return type;
+            }
+
+            private void ReadAttributes(Type type, XamlObjectNode node, HashSet<string> assigned,
+                Type dataType, Type parentDataType)
             {
                 while (reader.MoveToNextAttribute())
                 {
-                    if (reader.NamespaceURI == "http://www.w3.org/2000/xmlns/")
+                    if (reader.NamespaceURI == "http://www.w3.org/2000/xmlns/" || IsDataTypeAttribute())
                         continue;
                     string name = reader.LocalName;
                     bool xName = reader.NamespaceURI == XamlTypeResolver.XamlNamespace && name == "Name";
@@ -329,7 +368,8 @@ namespace Xamlity.Markup
                     }
                     var property = new XamlPropertyNode { PropertyName = name, OwnerTypeName = ownerTypeName,
                         Line = location.LineNumber, Column = location.LinePosition };
-                    ReadAttributeValue(type, propertyType, dp, property);
+                    ReadAttributeValue(type, propertyType, dp, property,
+                        dp == FrameworkElement.DataContextProperty ? parentDataType : dataType);
                     node.Properties.Add(property);
                 }
                 reader.MoveToElement();
@@ -345,7 +385,8 @@ namespace Xamlity.Markup
                 !value.StartsWith("{}", StringComparison.Ordinal) &&
                 value.TrimStart().StartsWith("{", StringComparison.Ordinal);
 
-            private void ReadAttributeValue(Type type, Type propertyType, DependencyProperty dp, XamlPropertyNode property)
+            private void ReadAttributeValue(Type type, Type propertyType, DependencyProperty dp, XamlPropertyNode property,
+                Type dataType)
             {
                 if (propertyType == null)
                     Error($"Unknown or read-only property '{property.PropertyName}' on type '{type.Name}'.");
@@ -356,6 +397,7 @@ namespace Xamlity.Markup
                     {
                         if (!IsBindingTarget(type, dp))
                             Error(BindingTargetError);
+                        ValidateBindingPath(binding, dataType);
                         property.Objects.Add(binding);
                     }
                     return;
@@ -422,6 +464,64 @@ namespace Xamlity.Markup
 
             private void Error(string message) =>
                 errors.Add(new XamlError(fileName, location.LineNumber, location.LinePosition, message));
+
+            private void ValidateBindingPath(XamlObjectNode binding, Type dataType)
+            {
+                if (dataType == null)
+                    return;
+                PropertyPath path = null;
+                BindingMode mode = BindingMode.OneWay;
+                foreach (XamlPropertyNode property in binding.Properties)
+                {
+                    Type valueType = property.PropertyName == "Path" ? typeof(PropertyPath) :
+                        property.PropertyName == "Mode" ? typeof(BindingMode) : null;
+                    if (valueType == null || property.TextValue == null)
+                        continue;
+                    if (!XamlValueConverter.TryConvert(property.TextValue, valueType, null, out object value, out _))
+                        return;
+                    if (value is PropertyPath propertyPath)
+                        path = propertyPath;
+                    else
+                        mode = (BindingMode)value;
+                }
+                if (path == null)
+                    return;
+                for (int i = 0; i < path.Segments.Length; i++)
+                {
+                    string segment = path.Segments[i];
+                    PropertyInfo property = FindPathProperty(dataType, segment);
+                    string error = null;
+                    if (property == null)
+                        error = $"Binding path '{path.Path}': property '{segment}' was not found on type '{dataType.FullName}' (x:DataType).";
+                    else if (mode == BindingMode.TwoWay && i == path.Segments.Length - 1 && property.GetSetMethod() == null)
+                        error = $"Binding path '{path.Path}': property '{segment}' on type '{dataType.FullName}' has no public setter; TwoWay bindings require one.";
+                    if (error != null)
+                    {
+                        errors.Add(new XamlError(fileName, binding.Line, binding.Column, error));
+                        return;
+                    }
+                    dataType = property.PropertyType;
+                }
+            }
+
+            private static PropertyInfo FindPathProperty(Type type, string name)
+            {
+                for (Type current = type; current != null; current = current.BaseType)
+                    foreach (PropertyInfo property in current.GetProperties(
+                        BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                        if (property.Name == name && property.GetGetMethod() != null && property.GetIndexParameters().Length == 0)
+                            return property;
+                PropertyInfo inherited = null;
+                if (type.IsInterface)
+                    foreach (Type baseInterface in type.GetInterfaces())
+                    {
+                        PropertyInfo candidate = FindPathProperty(baseInterface, name);
+                        if (candidate != null && (inherited == null ||
+                            inherited.DeclaringType.IsAssignableFrom(candidate.DeclaringType)))
+                            inherited = candidate;
+                    }
+                return inherited;
+            }
         }
     }
 }
