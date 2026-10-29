@@ -1,4 +1,5 @@
 using System;
+using Xamlity.Data;
 using Xamlity.Layout;
 using Xamlity.Properties;
 
@@ -6,6 +7,37 @@ namespace Xamlity.Tree
 {
     public class FrameworkElement : UIElement
     {
+        public static readonly DependencyProperty DataContextProperty = DependencyProperty.Register(
+            nameof(DataContext), typeof(object), typeof(FrameworkElement),
+            new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.Inherits));
+
+        public object DataContext
+        {
+            get => GetValue(DataContextProperty);
+            set => SetValue(DataContextProperty, value);
+        }
+
+        public event DependencyPropertyChangedEventHandler DataContextChanged;
+        internal event Action InheritanceParentChanged;
+
+        public BindingExpression SetBinding(DependencyProperty dp, Binding binding) =>
+            BindingOperations.SetBinding(this, dp, binding);
+
+        public BindingExpression SetBinding(DependencyProperty dp, string path) => SetBinding(dp, new Binding(path));
+
+        protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
+        {
+            base.OnPropertyChanged(e);
+            if (e.Property == DataContextProperty)
+                DataContextChanged?.Invoke(this, e);
+        }
+
+        protected internal override void OnInheritanceParentChanged(DependencyObject oldParent)
+        {
+            base.OnInheritanceParentChanged(oldParent);
+            InheritanceParentChanged?.Invoke();
+        }
+
         public static readonly DependencyProperty WidthProperty = DependencyProperty.Register(
             nameof(Width), typeof(double), typeof(FrameworkElement),
             new FrameworkPropertyMetadata(double.NaN, FrameworkPropertyMetadataOptions.AffectsMeasure));
