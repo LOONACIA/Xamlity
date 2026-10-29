@@ -1,0 +1,8 @@
+<StackPanel xmlns="https://github.com/loonacia/xamlity"
+            HorizontalAlignment="Center" VerticalAlignment="Center">
+    <Border Background="#243447" BorderBrush="#6CCFF6" BorderThickness="2" Padding="24,16">
+        <TextBlock Text="안녕하세요, Xamlity!" FontSize="32" Foreground="White" />
+    </Border>
+    <TextBlock Text="Hello from XAML in Unity." FontSize="20" Foreground="White"
+               HorizontalAlignment="Center" Margin="0,16,0,0" />
+</StackPanel>

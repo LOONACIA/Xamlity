@@ -23,7 +23,11 @@ namespace Xamlity.Unity
         internal IReadOnlyList<MeshDrawingContext.Batch> Batches => drawingContext.Batches;
         internal int MeshRebuildCount { get; private set; }
 
-        private void Awake() => Build(xaml);
+        private void Awake()
+        {
+            var settings = XamlitySettings.Load();
+            Build(xaml, settings != null ? settings.DefaultFont : null);
+        }
         private void OnEnable() => Register();
         private void OnDisable() => Unregister();
         private void LateUpdate() => Refresh(Screen.width, Screen.height);
