@@ -17,6 +17,18 @@ namespace Xamlity.Unity
         private readonly MeshDrawingContext drawingContext = new MeshDrawingContext();
         private int viewportWidth;
         private int viewportHeight;
+        private object dataContext;
+
+        public object DataContext
+        {
+            get => dataContext;
+            set
+            {
+                dataContext = value;
+                if (Tree?.RootElement is FrameworkElement element)
+                    element.DataContext = value;
+            }
+        }
 
         internal static IReadOnlyList<XamlityRoot> ActiveRoots => activeRoots;
         internal UIRoot Tree { get; private set; }
@@ -39,9 +51,13 @@ namespace Xamlity.Unity
         private void OnDisable() => Unregister();
         private void LateUpdate() => Refresh(Screen.width, Screen.height);
 
-        private void OnDestroy()
+        private void OnDestroy() => Release();
+
+        internal void Release()
         {
             Unregister();
+            if (Tree?.RootElement is FrameworkElement element)
+                element.DataContext = null;
             CoreUtils.Destroy(Mesh);
         }
 
@@ -49,7 +65,12 @@ namespace Xamlity.Unity
         {
             if (asset == null)
                 return;
-            Tree = new UIRoot(asset.Build(), new TmpTextMeasurer(), new FontHandle(defaultFont));
+            var tree = new UIRoot(asset.Build(), new TmpTextMeasurer(), new FontHandle(defaultFont));
+            if (Tree?.RootElement is FrameworkElement oldElement)
+                oldElement.DataContext = null;
+            Tree = tree;
+            if (Tree.RootElement is FrameworkElement element)
+                element.DataContext = dataContext;
             if (Mesh == null)
             {
                 Mesh = new Mesh { name = "Xamlity Root", hideFlags = HideFlags.HideAndDontSave };

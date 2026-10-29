@@ -22,6 +22,7 @@ namespace Xamlity.Editor.Tests
         }
 
         public event PropertyChangedEventHandler PropertyChanged;
+        public int SubscriberCount => PropertyChanged?.GetInvocationList().Length ?? 0;
     }
 
     public sealed class BindingTestConverter : IValueConverter
