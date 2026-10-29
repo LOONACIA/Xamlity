@@ -16,6 +16,7 @@ namespace Xamlity.Markup
         {
             var errors = new List<XamlError>();
             var assetReferences = new List<XamlAssetReference>();
+            var referencedAssemblies = new List<string>();
             XamlObjectNode root = null;
             var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null };
             try
@@ -23,7 +24,7 @@ namespace Xamlity.Markup
                 using (var input = new StringReader(text))
                 using (XmlReader reader = XmlReader.Create(input, settings))
                 {
-                    var parser = new Parser(reader, fileName, errors, assetReferences);
+                    var parser = new Parser(reader, fileName, errors, assetReferences, referencedAssemblies);
                     reader.MoveToContent();
                     root = parser.ReadObject(isRoot: true);
                     // Read through EOF so malformed trailing XML is also reported.
@@ -36,7 +37,7 @@ namespace Xamlity.Markup
                     Math.Max(1, exception.LinePosition), exception.Message));
             }
             return new XamlParseResult(errors.Count == 0 ? new XamlDocument { Root = root } : null,
-                errors.AsReadOnly(), assetReferences.AsReadOnly());
+                errors.AsReadOnly(), assetReferences.AsReadOnly(), referencedAssemblies.AsReadOnly());
         }
 
         private sealed class Parser
@@ -46,32 +47,34 @@ namespace Xamlity.Markup
             private readonly string fileName;
             private readonly List<XamlError> errors;
             private readonly List<XamlAssetReference> assetReferences;
+            private readonly List<string> referencedAssemblies;
+            private readonly HashSet<string> invalidMappings = new HashSet<string>(StringComparer.Ordinal);
 
             internal Parser(XmlReader reader, string fileName, List<XamlError> errors,
-                List<XamlAssetReference> assetReferences)
+                List<XamlAssetReference> assetReferences, List<string> referencedAssemblies)
             {
                 this.reader = reader;
                 location = (IXmlLineInfo)reader;
                 this.fileName = fileName;
                 this.errors = errors;
                 this.assetReferences = assetReferences;
+                this.referencedAssemblies = referencedAssemblies;
             }
 
             // Starts on an element and leaves the reader on the following node.
             internal XamlObjectNode ReadObject(bool isRoot = false, Type targetType = null,
                 string propertyName = null, bool allowBinding = false)
             {
+                ReadNamespaceDeclarations();
                 string name = reader.LocalName;
-                Type type = XamlTypeResolver.Resolve(reader.NamespaceURI, name);
+                Type type = XamlTypeResolver.Resolve(reader.NamespaceURI, name, out string typeError);
                 var node = new XamlObjectNode { Line = location.LineNumber, Column = location.LinePosition };
                 if (name.Contains("."))
                     Error($"Property elements are not supported: '{name}'.");
                 else if (reader.NamespaceURI == XamlTypeResolver.XamlNamespace)
                     Error($"XAML directive '{reader.Name}' is not supported.");
-                else if (reader.NamespaceURI != XamlTypeResolver.DefaultNamespace)
-                    Error($"XML namespace '{reader.NamespaceURI}' is not supported.");
-                else if (type == null)
-                    Error($"Unknown element '{name}'.");
+                else if (type == null && !invalidMappings.Contains(reader.NamespaceURI))
+                    Error(typeError);
                 if (type != null)
                 {
                     node.TypeName = $"{type.FullName}, {type.Assembly.GetName().Name}";
@@ -138,22 +141,24 @@ namespace Xamlity.Markup
 
             private void ReadPropertyElement(Type ownerType, XamlObjectNode owner, HashSet<string> assigned)
             {
+                ReadNamespaceDeclarations();
                 string name = reader.LocalName;
                 int separator = name.IndexOf('.');
                 string ownerName = name.Substring(0, separator);
                 string propertyName = name.Substring(separator + 1);
                 var node = new XamlPropertyNode { PropertyName = propertyName,
                     Line = location.LineNumber, Column = location.LinePosition };
-                bool matchesOwner = false;
-                for (Type current = ownerType; current != null; current = current.BaseType)
-                    if (current.Name == ownerName)
-                        matchesOwner = true;
+                Type declaredOwner = XamlTypeResolver.Resolve(reader.NamespaceURI, ownerName,
+                    out string ownerError, requireConstructor: false);
+                bool matchesOwner = declaredOwner != null && declaredOwner.IsClass &&
+                    ownerType != null && declaredOwner.IsAssignableFrom(ownerType);
 
                 Type propertyType = null;
                 DependencyProperty dp = null;
-                if (reader.NamespaceURI != XamlTypeResolver.DefaultNamespace)
-                    Error($"XML namespace '{reader.NamespaceURI}' is not supported.");
-                else if (ownerType != null)
+                bool invalidMapping = invalidMappings.Contains(reader.NamespaceURI);
+                if (!invalidMapping && declaredOwner == null && reader.NamespaceURI != XamlTypeResolver.DefaultNamespace)
+                    Error(ownerError);
+                else if (!invalidMapping && ownerType != null)
                 {
                     if (!matchesOwner)
                         Error($"Attached property elements are not supported: '{name}'.");
@@ -190,7 +195,7 @@ namespace Xamlity.Markup
                             if (reader.LocalName.Contains("."))
                             {
                                 Error("Property elements cannot directly contain property elements.");
-                                reader.Skip();
+                                SkipPropertyElement();
                             }
                             else
                                 node.Objects.Add(ReadObject(targetType: childType, propertyName: propertyName,
@@ -210,6 +215,37 @@ namespace Xamlity.Markup
                 if (propertyType != null && collection == null && node.Objects.Count != 1)
                     errors.Add(new XamlError(fileName, node.Line, node.Column,
                         $"Property '{propertyName}' requires exactly one object."));
+            }
+
+            private void ReadNamespaceDeclarations()
+            {
+                while (reader.MoveToNextAttribute())
+                {
+                    if (reader.NamespaceURI != "http://www.w3.org/2000/xmlns/" ||
+                        !reader.Value.StartsWith(XamlTypeResolver.ClrNamespacePrefix, StringComparison.Ordinal))
+                        continue;
+                    if (!XamlTypeResolver.TryParseClrNamespace(reader.Value, out _, out string assembly, out string error))
+                    {
+                        if (invalidMappings.Add(reader.Value))
+                            Error(error);
+                    }
+                    else if (!referencedAssemblies.Contains(assembly))
+                        referencedAssemblies.Add(assembly);
+                }
+                reader.MoveToElement();
+            }
+
+            private void SkipPropertyElement()
+            {
+                int depth = reader.Depth;
+                do
+                {
+                    if (reader.NodeType == XmlNodeType.Element)
+                        ReadNamespaceDeclarations();
+                    reader.Read();
+                } while (!reader.EOF && reader.Depth > depth);
+                if (reader.NodeType == XmlNodeType.EndElement && reader.Depth == depth)
+                    reader.Read();
             }
 
             private void ReadAttributes(Type type, XamlObjectNode node, HashSet<string> assigned)

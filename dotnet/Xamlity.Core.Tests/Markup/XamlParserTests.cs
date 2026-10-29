@@ -93,7 +93,6 @@ namespace Xamlity.Core.Tests.Markup
 
         [TestCase("")]
         [TestCase("urn:other")]
-        [TestCase("clr-namespace:Xamlity.Controls;assembly=Xamlity.Core")]
         public void RejectsUnsupportedElementNamespace(string xmlNamespace)
         {
             AssertError(XamlParser.Parse("\n<Border xmlns=\"" + xmlNamespace + "\" />", "view.xaml"),
