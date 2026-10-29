@@ -1,6 +1,7 @@
 using System;
 using Xamlity.Layout;
 using Xamlity.Properties;
+using Xamlity.Rendering;
 
 namespace Xamlity.Tree
 {
@@ -16,6 +17,7 @@ namespace Xamlity.Tree
         public bool IsMeasureValid { get; private set; }
         public bool IsArrangeValid { get; private set; }
         public UIElement VisualParent { get; private set; }
+        internal UIRoot Root { get; set; }
 
         public void Measure(Size availableSize)
         {
@@ -38,9 +40,13 @@ namespace Xamlity.Tree
                 return;
 
             IsArrangeValid = false;
+            Point oldOffset = VisualOffset;
+            Size oldSize = RenderSize;
             ArrangeCore(finalRect);
             previousFinalRect = finalRect;
             IsArrangeValid = true;
+            if (VisualOffset != oldOffset || RenderSize != oldSize)
+                InvalidateVisual();
         }
 
         protected virtual Size MeasureCore(Size availableSize) => new Size(0, 0);
@@ -66,6 +72,27 @@ namespace Xamlity.Tree
                 element.IsArrangeValid = false;
         }
 
+        public void InvalidateVisual()
+        {
+            UIElement element = this;
+            while (element.VisualParent != null)
+                element = element.VisualParent;
+            element.Root?.InvalidateVisual();
+        }
+
+        protected virtual void OnRender(IDrawingContext drawingContext)
+        {
+        }
+
+        internal void Render(UIRoot.OffsetDrawingContext drawingContext, Point parentOffset)
+        {
+            var offset = new Point(parentOffset.X + VisualOffset.X, parentOffset.Y + VisualOffset.Y);
+            drawingContext.Offset = offset;
+            OnRender(drawingContext);
+            for (int index = 0; index < VisualChildrenCount; index++)
+                GetVisualChild(index).Render(drawingContext, offset);
+        }
+
         protected void AddVisualChild(UIElement child)
         {
             if (child == null)
@@ -81,6 +108,7 @@ namespace Xamlity.Tree
             child.VisualParent = this;
             child.OnInheritanceParentChanged(null);
             InvalidateMeasure();
+            InvalidateVisual();
         }
 
         protected void RemoveVisualChild(UIElement child)
@@ -93,6 +121,7 @@ namespace Xamlity.Tree
             child.VisualParent = null;
             child.OnInheritanceParentChanged(this);
             InvalidateMeasure();
+            InvalidateVisual();
         }
 
         // Derived containers own their children and expose them through these members.
@@ -116,6 +145,8 @@ namespace Xamlity.Tree
                     InvalidateMeasure();
                 if (metadata.AffectsArrange)
                     InvalidateArrange();
+                if (metadata.AffectsRender)
+                    InvalidateVisual();
             }
         }
     }
