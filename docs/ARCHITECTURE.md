@@ -39,6 +39,14 @@ Core 내부는 다음 영역으로 나눈다. 폴더 이름은 네임스페이�
 | `Controls` | Border, TextBlock, Image, ContentPresenter, UserControl, ContentControl, Button, ItemsControl, ScrollViewer |
 | `Rendering` | `IDrawingContext`(사각형, 둥근 사각형, 이미지/9-slice, 글리프 런, 클립 push/pop, 불투명도 push/pop), `ITextMeasurer`, 이미지·폰트 핸들 추상 |
 
+`Markup`의 IR 직렬화 형식은 UTF-8 `BinaryWriter`/`BinaryReader` 기반이다. 헤더는 ASCII `XAIR` 4바이트와 little-endian int32 버전 `1`이다. 이어서 루트 객체를 재귀적으로 저장한다.
+
+- 객체: `TypeName`, `Name`, `Line`, `Column`, 프로퍼티 개수, 문서 순서의 프로퍼티들.
+- 프로퍼티: `PropertyName`, `Line`, `Column`, `TextValue`, 자식 객체 개수, 문서 순서의 자식 객체들.
+- 줄·열·개수는 int32이고, 문자열은 존재 여부 bool 1바이트 뒤에 값이 있으면 `BinaryWriter.Write(string)`의 7비트 가변 길이 바이트 수와 UTF-8 데이터를 쓴다(null과 빈 문자열 구분).
+
+값은 파서가 보존한 원문 문자열이며 런타임 빌더가 변환한다. 필드 추가·삭제·순서·인코딩 또는 값 해석의 호환성이 바뀌면 포맷 버전을 올리고 IR을 재임포트한다. 다른 매직·버전이나 잘린 데이터는 `InvalidDataException`으로 거부한다.
+
 ## 레이어 규칙
 - 의존 방향은 `Xamlity.Editor → Xamlity.Unity → Xamlity.Core` 한 방향이다. Core는 다른 어셈블리를 모른다. 이유: Core를 Unity 없이 `dotnet test`로 검증하고, 다른 엔진으로 옮길 가능성을 열어 둔다.
 - Core는 `UnityEngine`, `UnityEditor`, `TMPro`를 참조하지 않는다. 엔진 기능(글자 측정, 텍스처, 폰트, 로그, 시간)은 Core가 정의한 인터페이스를 Unity 어댑터가 구현해 주입한다.
@@ -94,6 +102,5 @@ Input System → 추상 입력 이벤트 → 히트 테스트 → RoutedEvent �
 
 ## 미정 사항
 첫 관련 스텝에서 정하고 이 문서에 반영한다.
-- IR 직렬화 형식(바이트 레이아웃, 버전 필드).
 - 기본 다크 테마의 구체적인 색과 치수.
 - 메시 배치 단위(텍스처·머티리얼별 배치 기준)와 셰이더 구성(SDF 텍스트, 둥근 사각형).

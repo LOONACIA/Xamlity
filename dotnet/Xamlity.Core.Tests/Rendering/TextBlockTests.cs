@@ -262,7 +262,7 @@ namespace Xamlity.Core.Tests.Rendering
             Assert.That(allocated, Is.Zero);
         }
 
-        private sealed class FakeTextMeasurer : ITextMeasurer
+        internal sealed class FakeTextMeasurer : ITextMeasurer
         {
             public int MetricsCalls { get; private set; }
             public FontHandle LastFont { get; private set; }
