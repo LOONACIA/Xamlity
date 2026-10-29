@@ -57,6 +57,9 @@ namespace Xamlity.Tree
             internal IDrawingContext Target { get; set; }
             internal Point Offset { get; set; }
 
+            public void PushOpacity(double opacity) => Target.PushOpacity(opacity);
+            public void Pop() => Target.Pop();
+
             public void DrawRectangle(Brush brush, Rect rect)
             {
                 Target.DrawRectangle(brush,

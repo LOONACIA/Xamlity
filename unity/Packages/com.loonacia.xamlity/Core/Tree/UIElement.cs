@@ -7,6 +7,10 @@ namespace Xamlity.Tree
 {
     public abstract class UIElement : DependencyObject
     {
+        public static readonly DependencyProperty OpacityProperty = DependencyProperty.Register(
+            nameof(Opacity), typeof(double), typeof(UIElement),
+            new FrameworkPropertyMetadata(1.0, FrameworkPropertyMetadataOptions.AffectsRender));
+
         private Size previousAvailableSize;
         private Rect previousFinalRect;
         private bool hasMeasured;
@@ -18,6 +22,12 @@ namespace Xamlity.Tree
         public bool IsArrangeValid { get; private set; }
         public UIElement VisualParent { get; private set; }
         internal UIRoot Root { get; set; }
+
+        public double Opacity
+        {
+            get => (double)GetValue(OpacityProperty);
+            set => SetValue(OpacityProperty, value);
+        }
 
         internal UIRoot GetRoot()
         {
@@ -102,11 +112,26 @@ namespace Xamlity.Tree
 
         internal void Render(UIRoot.OffsetDrawingContext drawingContext, Point parentOffset)
         {
-            var offset = new Point(parentOffset.X + VisualOffset.X, parentOffset.Y + VisualOffset.Y);
-            drawingContext.Offset = offset;
-            OnRender(drawingContext);
-            for (int index = 0; index < VisualChildrenCount; index++)
-                GetVisualChild(index).Render(drawingContext, offset);
+            double opacity = Opacity;
+            if (opacity <= 0 || double.IsNaN(opacity))
+                return;
+
+            bool pushOpacity = opacity < 1;
+            if (pushOpacity)
+                drawingContext.PushOpacity(opacity);
+            try
+            {
+                var offset = new Point(parentOffset.X + VisualOffset.X, parentOffset.Y + VisualOffset.Y);
+                drawingContext.Offset = offset;
+                OnRender(drawingContext);
+                for (int index = 0; index < VisualChildrenCount; index++)
+                    GetVisualChild(index).Render(drawingContext, offset);
+            }
+            finally
+            {
+                if (pushOpacity)
+                    drawingContext.Pop();
+            }
         }
 
         protected void AddVisualChild(UIElement child)

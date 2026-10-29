@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
@@ -15,6 +16,7 @@ namespace Xamlity.Unity
         private readonly List<Vector2> uvs = new List<Vector2>();
         private readonly List<int> indices = new List<int>();
         private readonly List<Batch> batches = new List<Batch>();
+        private readonly List<double> opacityStack = new List<double>();
         private int viewportHeight;
 
         // Null texture selects the solid material; every atlas uses the shared text material.
@@ -42,6 +44,20 @@ namespace Xamlity.Unity
             uvs.Clear();
             indices.Clear();
             batches.Clear();
+            opacityStack.Clear();
+        }
+
+        public void PushOpacity(double opacity)
+        {
+            double previous = opacityStack.Count == 0 ? 1 : opacityStack[opacityStack.Count - 1];
+            opacityStack.Add(previous * opacity);
+        }
+
+        public void Pop()
+        {
+            if (opacityStack.Count == 0)
+                throw new InvalidOperationException("There is no drawing state to pop.");
+            opacityStack.RemoveAt(opacityStack.Count - 1);
         }
 
         public void DrawRectangle(Brush brush, Rect rect)
@@ -75,7 +91,10 @@ namespace Xamlity.Unity
             uvs.Add(uvMax);
             uvs.Add(new Vector2(uvMax.x, uvMin.y));
             uvs.Add(uvMin);
-            var color = new Color32(solid.Color.R, solid.Color.G, solid.Color.B, solid.Color.A);
+            double opacity = opacityStack.Count == 0 ? 1 : opacityStack[opacityStack.Count - 1];
+            opacity = double.IsNaN(opacity) ? 0 : Math.Max(0, Math.Min(1, opacity));
+            var color = new Color32(solid.Color.R, solid.Color.G, solid.Color.B,
+                (byte)Math.Round(solid.Color.A * opacity));
             for (int i = 0; i < 4; i++)
                 colors.Add(color);
             indices.Add(first);

@@ -302,16 +302,5 @@ namespace Xamlity.Core.Tests.Rendering
                 return codePoint != '?';
             }
         }
-
-        private sealed class EmptyDrawingContext : IDrawingContext
-        {
-            public void DrawRectangle(Brush brush, Rect rect)
-            {
-            }
-
-            public void DrawGlyphRun(Brush foreground, GlyphRun glyphRun, Point baselineOrigin)
-            {
-            }
-        }
     }
 }

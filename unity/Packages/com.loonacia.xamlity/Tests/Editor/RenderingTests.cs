@@ -261,6 +261,131 @@ namespace Xamlity.Editor.Tests
         }
 
         [Test]
+        public void NestedOpacityMultipliesAlphaAndPopRestoresIt()
+        {
+            mesh = new Mesh();
+            var context = new MeshDrawingContext();
+            var brush = new SolidColorBrush(CoreColor.FromRgb(10, 20, 30));
+            var rect = new Rect(0, 0, 10, 10);
+            context.Begin(128);
+            context.DrawRectangle(brush, rect);
+            context.PushOpacity(0.5);
+            context.DrawRectangle(brush, rect);
+            context.PushOpacity(0.5);
+            context.DrawRectangle(brush, rect);
+            context.Pop();
+            context.DrawRectangle(brush, rect);
+            context.Pop();
+            context.DrawRectangle(brush, rect);
+            context.Upload(mesh);
+
+            var colors = mesh.colors32;
+            byte[] alphas = { 255, 128, 64, 128, 255 };
+            Assert.That(colors.Length, Is.EqualTo(alphas.Length * 4));
+            for (int i = 0; i < colors.Length; i++)
+                Assert.That(colors[i], Is.EqualTo(new Color32(10, 20, 30, alphas[i / 4])));
+            Assert.That(mesh.subMeshCount, Is.EqualTo(1));
+            Assert.Throws<System.InvalidOperationException>(() => context.Pop());
+        }
+
+        [TestCase(0.5, 1.0, 64)]
+        [TestCase(2.0, 0.25, 64)]
+        [TestCase(2.0, 1.0, 128)]
+        [TestCase(-1.0, 1.0, 0)]
+        [TestCase(0.0, 1.0, 0)]
+        [TestCase(double.NaN, 1.0, 0)]
+        public void OpacityProductIsClampedAndMultipliesBrushAlpha(double first, double second, int alpha)
+        {
+            mesh = new Mesh();
+            var context = new MeshDrawingContext();
+            context.Begin(128);
+            context.PushOpacity(first);
+            context.PushOpacity(second);
+            context.DrawRectangle(new SolidColorBrush(CoreColor.FromArgb(128, 10, 20, 30)),
+                new Rect(0, 0, 10, 10));
+            context.Upload(mesh);
+
+            Assert.That(mesh.colors32, Is.All.EqualTo(new Color32(10, 20, 30, (byte)alpha)));
+        }
+
+        [Test]
+        public void BeginClearsOpacityStack()
+        {
+            mesh = new Mesh();
+            var context = new MeshDrawingContext();
+            Assert.Throws<System.InvalidOperationException>(() => context.Pop());
+            context.Begin(128);
+            context.PushOpacity(0.5);
+            context.PushOpacity(0.25);
+            context.Begin(128);
+            context.DrawRectangle(new SolidColorBrush(CoreColor.FromRgb(10, 20, 30)),
+                new Rect(0, 0, 10, 10));
+            context.Upload(mesh);
+
+            Assert.That(mesh.colors32, Is.All.EqualTo(new Color32(10, 20, 30, 255)));
+            Assert.Throws<System.InvalidOperationException>(() => context.Pop());
+        }
+
+        [Test]
+        public void GlyphOpacityMultipliesBrushAlpha()
+        {
+            CreateFont();
+            var run = MeasureKorean();
+            mesh = new Mesh();
+            var context = new MeshDrawingContext();
+            context.Begin(128);
+            context.PushOpacity(0.5);
+            context.DrawGlyphRun(new SolidColorBrush(CoreColor.FromArgb(128, 10, 20, 30)), run, new Point(0, 60));
+            context.Pop();
+            context.Upload(mesh);
+
+            Assert.That(mesh.vertexCount, Is.EqualTo(8));
+            Assert.That(mesh.colors32, Is.All.EqualTo(new Color32(10, 20, 30, 64)));
+        }
+
+        [Test]
+        public void UnchangedOpacityRefreshReusesMeshWithoutAllocating()
+        {
+            var root = CreateRoot();
+            ((Border)root.Tree.RootElement).Opacity = 0.5;
+            root.Refresh(256, 128);
+            var originalMesh = root.Mesh;
+
+            long before = System.GC.GetAllocatedBytesForCurrentThread();
+            root.Refresh(256, 128);
+            long allocated = System.GC.GetAllocatedBytesForCurrentThread() - before;
+            Assert.That(allocated, Is.Zero);
+            Assert.That(() => root.Refresh(256, 128), Is.Not.AllocatingGCMemory());
+
+            Assert.That(root.MeshRebuildCount, Is.EqualTo(1));
+            Assert.That(root.Mesh, Is.SameAs(originalMesh));
+            Assert.That(root.Mesh.colors32, Is.All.EqualTo(new Color32(255, 0, 0, 128)));
+        }
+
+        [Test]
+        public void GameCameraBlendsHalfOpacityRedBandInLinearColorSpace()
+        {
+            Assert.That(QualitySettings.activeColorSpace, Is.EqualTo(ColorSpace.Linear),
+                "This opacity pixel regression test requires a Linear color space project.");
+            var root = CreateRoot();
+            root.Refresh(256, 128);
+            ((Border)root.Tree.RootElement).Opacity = 0.5;
+            root.Refresh(256, 128);
+            Assert.That(root.MeshRebuildCount, Is.EqualTo(2));
+            Render(CreateCamera());
+
+            // Linear blending encodes half red as approximately 188 in the sRGB target.
+            for (int y = 0; y < 128; y++)
+                for (int x = 0; x < 256; x++)
+                {
+                    Color actual = pixels.GetPixel(x, y);
+                    Assert.That(actual.r, Is.EqualTo(y >= 64 ? 188 / 255f : 0).Within(3 / 255f));
+                    Assert.That(actual.g, Is.Zero);
+                    Assert.That(actual.b, Is.Zero);
+                }
+        }
+
+        [Test]
         public void ConsecutiveSolidCommandsShareOneBatchAndKeepTheirOrder()
         {
             mesh = new Mesh();
