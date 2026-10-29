@@ -5,6 +5,10 @@ namespace Xamlity.Core.Tests.Rendering
 {
     internal sealed class EmptyDrawingContext : IDrawingContext
     {
+        public void PushClip(Rect clipRect)
+        {
+        }
+
         public void PushOpacity(double opacity)
         {
         }

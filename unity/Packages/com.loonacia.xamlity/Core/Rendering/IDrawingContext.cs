@@ -4,6 +4,7 @@ namespace Xamlity.Rendering
 {
     public interface IDrawingContext
     {
+        void PushClip(Rect clipRect);
         void PushOpacity(double opacity);
         void Pop();
         void DrawRectangle(Brush brush, Rect rect);

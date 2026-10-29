@@ -47,6 +47,7 @@ namespace Xamlity.Tree
             new FrameworkPropertyMetadata(string.Empty, FrameworkPropertyMetadataOptions.None));
 
         private Size unclippedDesiredSize;
+        private bool needsClipBounds;
 
         public double Width
         {
@@ -143,24 +144,64 @@ namespace Xamlity.Tree
             var arrangeSize = new Size(
                 Math.Min(width, Math.Max(unclippedDesiredSize.Width, maximum.Width)),
                 Math.Min(height, Math.Max(unclippedDesiredSize.Height, maximum.Height)));
+            needsClipBounds = clientSize.Width < unclippedDesiredSize.Width
+                || clientSize.Height < unclippedDesiredSize.Height
+                || arrangeSize.Width < width || arrangeSize.Height < height;
             RenderSize = ArrangeOverride(arrangeSize);
 
             // WPF aligns using the maximum-constrained ink size, without changing RenderSize.
             double inkWidth = Math.Min(RenderSize.Width, maximum.Width);
             double inkHeight = Math.Min(RenderSize.Height, maximum.Height);
+            needsClipBounds |= inkWidth < RenderSize.Width || inkHeight < RenderSize.Height
+                || clientSize.Width < inkWidth || clientSize.Height < inkHeight;
+            Point offset = ComputeAlignmentOffset(clientSize, new Size(inkWidth, inkHeight));
+            VisualOffset = new Point(finalRect.X + margin.Left + offset.X, finalRect.Y + margin.Top + offset.Y);
+        }
+
+        protected override Rect? GetLayoutClip(Size layoutSlotSize)
+        {
+            if (!needsClipBounds && !ClipToBounds)
+                return null;
+
+            GetSizeLimits(out _, out Size maximum);
+            double maxWidthClip = double.IsPositiveInfinity(maximum.Width) ? RenderSize.Width : maximum.Width;
+            double maxHeightClip = double.IsPositiveInfinity(maximum.Height) ? RenderSize.Height : maximum.Height;
+            bool needToClipLocally = ClipToBounds || maxWidthClip < RenderSize.Width || maxHeightClip < RenderSize.Height;
+            var inkSize = new Size(Math.Min(RenderSize.Width, maximum.Width), Math.Min(RenderSize.Height, maximum.Height));
+            Thickness margin = Margin;
+            var clippingSize = new Size(Math.Max(0, layoutSlotSize.Width - margin.Left - margin.Right),
+                Math.Max(0, layoutSlotSize.Height - margin.Top - margin.Bottom));
+            bool needToClipSlot = clippingSize.Width < inkSize.Width || clippingSize.Height < inkSize.Height;
+            if (needToClipSlot)
+            {
+                Point offset = ComputeAlignmentOffset(clippingSize, inkSize);
+                var clip = new Rect(-offset.X, -offset.Y, clippingSize.Width, clippingSize.Height);
+                if (!needToClipLocally)
+                    return clip;
+
+                double left = Math.Max(0, clip.Left);
+                double top = Math.Max(0, clip.Top);
+                return new Rect(left, top, Math.Max(0, Math.Min(maxWidthClip, clip.Right) - left),
+                    Math.Max(0, Math.Min(maxHeightClip, clip.Bottom) - top));
+            }
+            return needToClipLocally ? new Rect(0, 0, maxWidthClip, maxHeightClip) : (Rect?)null;
+        }
+
+        private Point ComputeAlignmentOffset(Size clientSize, Size inkSize)
+        {
             double x = 0;
             double y = 0;
             if (HorizontalAlignment == HorizontalAlignment.Center
-                || (HorizontalAlignment == HorizontalAlignment.Stretch && inkWidth <= clientSize.Width))
-                x = (clientSize.Width - inkWidth) / 2;
+                || (HorizontalAlignment == HorizontalAlignment.Stretch && inkSize.Width <= clientSize.Width))
+                x = (clientSize.Width - inkSize.Width) / 2;
             else if (HorizontalAlignment == HorizontalAlignment.Right)
-                x = clientSize.Width - inkWidth;
+                x = clientSize.Width - inkSize.Width;
             if (VerticalAlignment == VerticalAlignment.Center
-                || (VerticalAlignment == VerticalAlignment.Stretch && inkHeight <= clientSize.Height))
-                y = (clientSize.Height - inkHeight) / 2;
+                || (VerticalAlignment == VerticalAlignment.Stretch && inkSize.Height <= clientSize.Height))
+                y = (clientSize.Height - inkSize.Height) / 2;
             else if (VerticalAlignment == VerticalAlignment.Bottom)
-                y = clientSize.Height - inkHeight;
-            VisualOffset = new Point(finalRect.X + margin.Left + x, finalRect.Y + margin.Top + y);
+                y = clientSize.Height - inkSize.Height;
+            return new Point(x, y);
         }
 
         private void GetSizeLimits(out Size minimum, out Size maximum)

@@ -57,6 +57,8 @@ namespace Xamlity.Tree
             internal IDrawingContext Target { get; set; }
             internal Point Offset { get; set; }
 
+            public void PushClip(Rect clipRect) => Target.PushClip(
+                new Rect(clipRect.X + Offset.X, clipRect.Y + Offset.Y, clipRect.Width, clipRect.Height));
             public void PushOpacity(double opacity) => Target.PushOpacity(opacity);
             public void Pop() => Target.Pop();
 

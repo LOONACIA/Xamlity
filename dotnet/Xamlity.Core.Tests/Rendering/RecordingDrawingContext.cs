@@ -12,6 +12,8 @@ namespace Xamlity.Core.Tests.Rendering
         public List<(Brush Foreground, GlyphRun Run, Point BaselineOrigin)> GlyphRuns { get; } =
             new List<(Brush, GlyphRun, Point)>();
 
+        public void PushClip(Rect clipRect) =>
+            Calls.Add((nameof(PushClip), default, null, clipRect, null, default));
         public void PushOpacity(double opacity) =>
             Calls.Add((nameof(PushOpacity), opacity, null, default, null, default));
         public void Pop() => Calls.Add((nameof(Pop), default, null, default, null, default));

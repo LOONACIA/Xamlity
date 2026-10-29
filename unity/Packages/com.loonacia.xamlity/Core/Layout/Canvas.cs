@@ -36,6 +36,9 @@ namespace Xamlity.Layout
         public static void SetBottom(UIElement element, double length) =>
             (element ?? throw new ArgumentNullException(nameof(element))).SetValue(BottomProperty, length);
 
+        protected override Rect? GetLayoutClip(Size layoutSlotSize) =>
+            ClipToBounds ? new Rect(new Point(0, 0), RenderSize) : (Rect?)null;
+
         protected override Size MeasureOverride(Size availableSize)
         {
             var constraint = new Size(double.PositiveInfinity, double.PositiveInfinity);

@@ -16,8 +16,22 @@ namespace Xamlity.Unity
         private readonly List<Vector2> uvs = new List<Vector2>();
         private readonly List<int> indices = new List<int>();
         private readonly List<Batch> batches = new List<Batch>();
-        private readonly List<double> opacityStack = new List<double>();
+        private readonly List<DrawingState> stateStack = new List<DrawingState>();
+        private double currentOpacity = 1;
+        private Rect? currentClip;
         private int viewportHeight;
+
+        private readonly struct DrawingState
+        {
+            internal DrawingState(double opacity, Rect? clip)
+            {
+                Opacity = opacity;
+                Clip = clip;
+            }
+
+            internal double Opacity { get; }
+            internal Rect? Clip { get; }
+        }
 
         // Null texture selects the solid material; every atlas uses the shared text material.
         internal readonly struct Batch
@@ -44,20 +58,39 @@ namespace Xamlity.Unity
             uvs.Clear();
             indices.Clear();
             batches.Clear();
-            opacityStack.Clear();
+            stateStack.Clear();
+            currentOpacity = 1;
+            currentClip = null;
+        }
+
+        public void PushClip(Rect clipRect)
+        {
+            stateStack.Add(new DrawingState(currentOpacity, currentClip));
+            if (currentClip.HasValue)
+            {
+                Rect previous = currentClip.Value;
+                double left = Math.Max(previous.Left, clipRect.Left);
+                double top = Math.Max(previous.Top, clipRect.Top);
+                clipRect = new Rect(left, top, Math.Max(0, Math.Min(previous.Right, clipRect.Right) - left),
+                    Math.Max(0, Math.Min(previous.Bottom, clipRect.Bottom) - top));
+            }
+            currentClip = clipRect;
         }
 
         public void PushOpacity(double opacity)
         {
-            double previous = opacityStack.Count == 0 ? 1 : opacityStack[opacityStack.Count - 1];
-            opacityStack.Add(previous * opacity);
+            stateStack.Add(new DrawingState(currentOpacity, currentClip));
+            currentOpacity *= opacity;
         }
 
         public void Pop()
         {
-            if (opacityStack.Count == 0)
+            if (stateStack.Count == 0)
                 throw new InvalidOperationException("There is no drawing state to pop.");
-            opacityStack.RemoveAt(opacityStack.Count - 1);
+            DrawingState previous = stateStack[stateStack.Count - 1];
+            currentOpacity = previous.Opacity;
+            currentClip = previous.Clip;
+            stateStack.RemoveAt(stateStack.Count - 1);
         }
 
         public void DrawRectangle(Brush brush, Rect rect)
@@ -70,6 +103,27 @@ namespace Xamlity.Unity
 
         private void AddQuad(SolidColorBrush solid, Rect rect, Texture texture, Vector2 uvMin, Vector2 uvMax)
         {
+            if (currentClip.HasValue)
+            {
+                Rect clip = currentClip.Value;
+                double leftEdge = Math.Max(rect.Left, clip.Left);
+                double topEdge = Math.Max(rect.Top, clip.Top);
+                double rightEdge = Math.Min(rect.Right, clip.Right);
+                double bottomEdge = Math.Min(rect.Bottom, clip.Bottom);
+                if (rightEdge <= leftEdge || bottomEdge <= topEdge)
+                    return;
+
+                Vector2 uvSize = uvMax - uvMin;
+                var clippedUvMin = new Vector2(
+                    uvMin.x + uvSize.x * (float)((leftEdge - rect.Left) / rect.Width),
+                    uvMin.y + uvSize.y * (float)((rect.Bottom - bottomEdge) / rect.Height));
+                uvMax = new Vector2(
+                    uvMax.x - uvSize.x * (float)((rect.Right - rightEdge) / rect.Width),
+                    uvMax.y - uvSize.y * (float)((topEdge - rect.Top) / rect.Height));
+                uvMin = clippedUvMin;
+                rect = new Rect(leftEdge, topEdge, rightEdge - leftEdge, bottomEdge - topEdge);
+            }
+
             if (batches.Count != 0 && batches[batches.Count - 1].Texture == texture)
             {
                 var previous = batches[batches.Count - 1];
@@ -91,7 +145,7 @@ namespace Xamlity.Unity
             uvs.Add(uvMax);
             uvs.Add(new Vector2(uvMax.x, uvMin.y));
             uvs.Add(uvMin);
-            double opacity = opacityStack.Count == 0 ? 1 : opacityStack[opacityStack.Count - 1];
+            double opacity = currentOpacity;
             opacity = double.IsNaN(opacity) ? 0 : Math.Max(0, Math.Min(1, opacity));
             var color = new Color32(solid.Color.R, solid.Color.G, solid.Color.B,
                 (byte)Math.Round(solid.Color.A * opacity));

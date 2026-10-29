@@ -7,12 +7,17 @@ namespace Xamlity.Tree
 {
     public abstract class UIElement : DependencyObject
     {
+        public static readonly DependencyProperty ClipToBoundsProperty = DependencyProperty.Register(
+            nameof(ClipToBounds), typeof(bool), typeof(UIElement),
+            new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.AffectsRender));
+
         public static readonly DependencyProperty OpacityProperty = DependencyProperty.Register(
             nameof(Opacity), typeof(double), typeof(UIElement),
             new FrameworkPropertyMetadata(1.0, FrameworkPropertyMetadataOptions.AffectsRender));
 
         private Size previousAvailableSize;
         private Rect previousFinalRect;
+        private Rect? layoutClip;
         private bool hasMeasured;
 
         public Size DesiredSize { get; private set; }
@@ -27,6 +32,12 @@ namespace Xamlity.Tree
         {
             get => (double)GetValue(OpacityProperty);
             set => SetValue(OpacityProperty, value);
+        }
+
+        public bool ClipToBounds
+        {
+            get => (bool)GetValue(ClipToBoundsProperty);
+            set => SetValue(ClipToBoundsProperty, value);
         }
 
         internal UIRoot GetRoot()
@@ -70,12 +81,17 @@ namespace Xamlity.Tree
             Size oldSize = RenderSize;
             ArrangeCore(finalRect);
             previousFinalRect = finalRect;
+            Rect? newClip = GetLayoutClip(finalRect.Size);
             IsArrangeValid = true;
-            if (VisualOffset != oldOffset || RenderSize != oldSize)
+            if (VisualOffset != oldOffset || RenderSize != oldSize || layoutClip != newClip)
                 InvalidateVisual();
+            layoutClip = newClip;
         }
 
         protected virtual Size MeasureCore(Size availableSize) => new Size(0, 0);
+
+        protected virtual Rect? GetLayoutClip(Size layoutSlotSize) =>
+            ClipToBounds ? new Rect(new Point(0, 0), RenderSize) : (Rect?)null;
 
         protected virtual void ArrangeCore(Rect finalRect)
         {
@@ -116,13 +132,16 @@ namespace Xamlity.Tree
             if (opacity <= 0 || double.IsNaN(opacity))
                 return;
 
+            var offset = new Point(parentOffset.X + VisualOffset.X, parentOffset.Y + VisualOffset.Y);
+            drawingContext.Offset = offset;
+            layoutClip = GetLayoutClip(previousFinalRect.Size);
+            if (layoutClip.HasValue)
+                drawingContext.PushClip(layoutClip.Value);
             bool pushOpacity = opacity < 1;
             if (pushOpacity)
                 drawingContext.PushOpacity(opacity);
             try
             {
-                var offset = new Point(parentOffset.X + VisualOffset.X, parentOffset.Y + VisualOffset.Y);
-                drawingContext.Offset = offset;
                 OnRender(drawingContext);
                 for (int index = 0; index < VisualChildrenCount; index++)
                     GetVisualChild(index).Render(drawingContext, offset);
@@ -130,6 +149,8 @@ namespace Xamlity.Tree
             finally
             {
                 if (pushOpacity)
+                    drawingContext.Pop();
+                if (layoutClip.HasValue)
                     drawingContext.Pop();
             }
         }

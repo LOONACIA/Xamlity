@@ -261,6 +261,216 @@ namespace Xamlity.Editor.Tests
         }
 
         [Test]
+        public void PartialClipCutsRectangleVerticesWithoutChangingColorOrBatch()
+        {
+            mesh = new Mesh();
+            var context = new MeshDrawingContext();
+            context.Begin(128);
+            context.PushClip(new Rect(10, 16, 10, 20));
+            context.DrawRectangle(new SolidColorBrush(CoreColor.FromArgb(128, 10, 20, 30)),
+                new Rect(5, 8, 20, 40));
+            context.Pop();
+            context.Upload(mesh);
+
+            Assert.That(mesh.vertices, Is.EqualTo(new[]
+            {
+                new Vector3(10, 112, 0), new Vector3(20, 112, 0),
+                new Vector3(20, 92, 0), new Vector3(10, 92, 0)
+            }));
+            Assert.That(mesh.colors32, Is.All.EqualTo(new Color32(10, 20, 30, 128)));
+            Assert.That(mesh.uv, Is.All.EqualTo(Vector2.zero));
+            Assert.That(mesh.subMeshCount, Is.EqualTo(1));
+            Assert.That(mesh.triangles, Is.EqualTo(new[] { 0, 1, 2, 0, 2, 3 }));
+        }
+
+        [TestCase(20, 0, 10, 10)]
+        [TestCase(10, 0, 10, 10)]
+        [TestCase(0, 10, 10, 10)]
+        [TestCase(0, 0, 0, 10)]
+        [TestCase(0, 0, 10, 0)]
+        public void FullyClippedRectangleProducesNoVerticesOrBatches(double x, double y, double width, double height)
+        {
+            mesh = new Mesh();
+            var context = new MeshDrawingContext();
+            context.Begin(128);
+            context.PushClip(new Rect(x, y, width, height));
+            context.DrawRectangle(new SolidColorBrush(CoreColor.FromRgb(255, 0, 0)), new Rect(0, 0, 10, 10));
+            context.Upload(mesh);
+
+            Assert.That(mesh.vertexCount, Is.Zero);
+            Assert.That(mesh.subMeshCount, Is.Zero);
+            Assert.That(context.Batches, Is.Empty);
+        }
+
+        [Test]
+        public void NestedClipsIntersectAndMixedOpacityPopsRestoreBothStates()
+        {
+            mesh = new Mesh();
+            var context = new MeshDrawingContext();
+            var brush = new SolidColorBrush(CoreColor.FromRgb(255, 0, 0));
+            var rect = new Rect(0, 0, 100, 100);
+            context.Begin(128);
+            context.PushClip(new Rect(10, 20, 50, 50));
+            context.PushOpacity(0.5);
+            context.PushClip(new Rect(30, 10, 50, 40));
+            context.DrawRectangle(brush, rect);
+            context.PushClip(new Rect(90, 90, 10, 10));
+            context.DrawRectangle(brush, rect);
+            context.Pop();
+            context.Pop();
+            context.DrawRectangle(brush, rect);
+            context.Pop();
+            context.DrawRectangle(brush, rect);
+            context.Pop();
+            context.DrawRectangle(brush, rect);
+            context.Upload(mesh);
+
+            var vertices = mesh.vertices;
+            var colors = mesh.colors32;
+            var expected = new[]
+            {
+                new Rect(30, 20, 30, 30), new Rect(10, 20, 50, 50),
+                new Rect(10, 20, 50, 50), rect
+            };
+            Assert.That(vertices.Length, Is.EqualTo(16));
+            for (int i = 0; i < expected.Length; i++)
+            {
+                Assert.That(vertices[i * 4], Is.EqualTo(new Vector3((float)expected[i].Left,
+                    (float)(128 - expected[i].Top), 0)));
+                Assert.That(vertices[i * 4 + 2], Is.EqualTo(new Vector3((float)expected[i].Right,
+                    (float)(128 - expected[i].Bottom), 0)));
+                for (int j = 0; j < 4; j++)
+                    Assert.That(colors[i * 4 + j].a, Is.EqualTo(i < 2 ? 128 : 255));
+            }
+            Assert.That(mesh.subMeshCount, Is.EqualTo(1));
+            Assert.That(mesh.GetIndices(0).Length, Is.EqualTo(24));
+            Assert.Throws<System.InvalidOperationException>(() => context.Pop());
+        }
+
+        [Test]
+        public void ClippedGlyphInterpolatesUvsOnAllFourEdges()
+        {
+            CreateFont();
+            var measured = MeasureKorean();
+            var run = new GlyphRun(measured.Font, measured.FontSize,
+                new[] { measured.GlyphIndices[0] }, new[] { measured.AdvanceWidths[0] });
+            var brush = new SolidColorBrush(CoreColor.FromRgb(255, 255, 255));
+            var origin = new Point(10, 70);
+            mesh = new Mesh();
+            var context = new MeshDrawingContext();
+            context.Begin(128);
+            context.DrawGlyphRun(brush, run, origin);
+            context.Upload(mesh);
+            var originalVertices = mesh.vertices;
+            var originalUvs = mesh.uv;
+            float left = Mathf.Lerp(originalVertices[0].x, originalVertices[2].x, 0.25f);
+            float right = Mathf.Lerp(originalVertices[0].x, originalVertices[2].x, 0.75f);
+            float top = Mathf.Lerp(originalVertices[0].y, originalVertices[2].y, 0.2f);
+            float bottom = Mathf.Lerp(originalVertices[0].y, originalVertices[2].y, 0.6f);
+            context.Begin(128);
+            context.PushClip(new Rect(left, 128 - top, right - left, top - bottom));
+            context.DrawGlyphRun(brush, run, origin);
+            context.Pop();
+            context.Upload(mesh);
+
+            Assert.That(mesh.vertexCount, Is.EqualTo(4));
+            Assert.That(mesh.vertices, Is.EqualTo(new[]
+            {
+                new Vector3(left, top, 0), new Vector3(right, top, 0),
+                new Vector3(right, bottom, 0), new Vector3(left, bottom, 0)
+            }));
+            var uvs = mesh.uv;
+            float[] horizontalFractions = { 0.25f, 0.75f, 0.75f, 0.25f };
+            float[] verticalFractions = { 0.2f, 0.2f, 0.6f, 0.6f };
+            for (int i = 0; i < 4; i++)
+            {
+                Assert.That(uvs[i].x, Is.EqualTo(Mathf.Lerp(originalUvs[0].x, originalUvs[2].x,
+                    horizontalFractions[i])).Within(0.00001));
+                Assert.That(uvs[i].y, Is.EqualTo(Mathf.Lerp(originalUvs[0].y, originalUvs[2].y,
+                    verticalFractions[i])).Within(0.00001));
+            }
+            Assert.That(context.Batches[0].Texture, Is.SameAs(fontAsset.atlasTextures[0]));
+        }
+
+        [Test]
+        public void FullyClippedGlyphsProduceNoBatchAndDoNotSplitSolidBatch()
+        {
+            CreateFont();
+            var run = MeasureKorean();
+            var brush = new SolidColorBrush(CoreColor.FromRgb(255, 255, 255));
+            mesh = new Mesh();
+            var context = new MeshDrawingContext();
+            context.Begin(128);
+            context.PushClip(new Rect(1000, 1000, 10, 10));
+            context.DrawGlyphRun(brush, run, new Point(0, 60));
+            context.Upload(mesh);
+            Assert.That(mesh.vertexCount, Is.Zero);
+            Assert.That(context.Batches, Is.Empty);
+            context.Pop();
+            context.DrawRectangle(brush, new Rect(0, 0, 10, 10));
+            context.PushClip(new Rect(1000, 1000, 10, 10));
+            context.DrawGlyphRun(brush, run, new Point(0, 60));
+            context.Pop();
+            context.DrawRectangle(brush, new Rect(0, 0, 10, 10));
+            context.Upload(mesh);
+
+            Assert.That(mesh.vertexCount, Is.EqualTo(8));
+            Assert.That(mesh.subMeshCount, Is.EqualTo(1));
+            Assert.That(context.Batches[0].Texture, Is.Null);
+        }
+
+        [Test]
+        public void BeginClearsClipAndOpacityStates()
+        {
+            mesh = new Mesh();
+            var context = new MeshDrawingContext();
+            context.Begin(128);
+            context.PushOpacity(0.5);
+            context.PushClip(new Rect(0, 0, 1, 1));
+            context.Begin(128);
+            context.DrawRectangle(new SolidColorBrush(CoreColor.FromRgb(255, 0, 0)), new Rect(0, 0, 10, 10));
+            context.Upload(mesh);
+
+            Assert.That(mesh.vertices[2], Is.EqualTo(new Vector3(10, 118, 0)));
+            Assert.That(mesh.colors32, Is.All.EqualTo(new Color32(255, 0, 0, 255)));
+            Assert.Throws<System.InvalidOperationException>(() => context.Pop());
+        }
+
+        [Test]
+        public void GameCameraClipsOversizedRedChildAtBorderRightEdge()
+        {
+            var root = CreateRoot();
+            var border = (Border)root.Tree.RootElement;
+            border.Width = 64;
+            border.Height = 128;
+            border.HorizontalAlignment = Xamlity.Layout.HorizontalAlignment.Left;
+            border.ClipToBounds = true;
+            border.Background = null;
+            border.Child = new Border { Width = 128, Height = 128,
+                HorizontalAlignment = Xamlity.Layout.HorizontalAlignment.Left,
+                Background = new SolidColorBrush(CoreColor.FromRgb(255, 0, 0)) };
+            root.Refresh(256, 128);
+            Render(CreateCamera());
+
+            for (int y = 0; y < 128; y++)
+                for (int x = 0; x < 256; x++)
+                    AssertPixel(x, y, x < 64 ? Color.red : Color.black);
+        }
+
+        [Test]
+        public void UnchangedClipRefreshReusesMeshWithoutAllocating()
+        {
+            var root = CreateRoot();
+            ((Border)root.Tree.RootElement).ClipToBounds = true;
+            root.Refresh(256, 128);
+            var originalMesh = root.Mesh;
+
+            Assert.That(() => root.Refresh(256, 128), Is.Not.AllocatingGCMemory());
+            Assert.That(root.MeshRebuildCount, Is.EqualTo(1));
+            Assert.That(root.Mesh, Is.SameAs(originalMesh));
+        }
+
+        [Test]
         public void NestedOpacityMultipliesAlphaAndPopRestoresIt()
         {
             mesh = new Mesh();
