@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using NUnit.Framework;
@@ -8,6 +9,7 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.TextCore.LowLevel;
 using Xamlity.Controls;
+using Xamlity.Data;
 using Xamlity.Layout;
 using Xamlity.Rendering;
 using Xamlity.Tree;
@@ -23,6 +25,7 @@ namespace Xamlity.Editor.Tests
         private const string HelloPath = "Assets/Samples/Hello/Hello.xaml";
         private const string HudPath = "Assets/Samples/Hud/Hud.xaml";
         private const string PanelPath = "Assets/Samples/Hud/Panel.png";
+        private const string PlayerStatusPath = "Assets/Samples/Binding/PlayerStatus.xaml";
 
         [Test]
         public void SettingsLoadCachedDynamicFontWithSourceAndEmptyAtlas()
@@ -130,6 +133,133 @@ namespace Xamlity.Editor.Tests
                     Is.SameAs(AssetDatabase.LoadAssetAtPath<XamlAsset>(HudPath)));
                 Assert.That(serialized.FindProperty("referenceResolution").vector2IntValue,
                     Is.EqualTo(new Vector2Int(1920, 1080)));
+            }
+            finally
+            {
+                EditorSceneManager.CloseScene(scene, true);
+            }
+        }
+
+        [Test]
+        public void PlayerStatusBuildsAndUpdatesTextAndConvertedHpWidth()
+        {
+            var asset = AssetDatabase.LoadAssetAtPath<XamlAsset>(PlayerStatusPath);
+            Assert.That(asset, Is.Not.Null);
+            Assert.That(asset.HasIr, Is.True);
+            var root = (FrameworkElement)asset.Build();
+            var elements = DescendantsAndSelf(root).OfType<FrameworkElement>()
+                .Where(element => !string.IsNullOrEmpty(element.Name)).ToDictionary(element => element.Name);
+            var viewModelType = System.Type.GetType("Xamlity.Samples.Binding.PlayerStatusViewModel, Assembly-CSharp", true);
+            var playerType = System.Type.GetType("Xamlity.Samples.Binding.PlayerModel, Assembly-CSharp", true);
+            var viewModel = System.Activator.CreateInstance(viewModelType);
+            var player = System.Activator.CreateInstance(playerType);
+            playerType.GetProperty("Name").SetValue(player, "달빛 탐험가");
+            playerType.GetProperty("MaxHp").SetValue(player, 200);
+            playerType.GetProperty("Hp").SetValue(player, 150);
+            viewModelType.GetProperty("Player").SetValue(viewModel, player);
+            viewModelType.GetProperty("Gold").SetValue(viewModel, 321);
+            try
+            {
+                root.DataContext = viewModel;
+                Assert.That(((TextBlock)elements["PlayerName"]).Text, Is.EqualTo("달빛 탐험가"));
+                Assert.That(((TextBlock)elements["CurrentHp"]).Text, Is.EqualTo("150"));
+                Assert.That(((TextBlock)elements["MaximumHp"]).Text, Is.EqualTo("200"));
+                Assert.That(((TextBlock)elements["GoldAmount"]).Text, Is.EqualTo("321"));
+                Assert.That(((TextBlock)elements["BindingLiteral"]).Text, Is.EqualTo("{Binding}"));
+                Assert.That(elements["HpFill"].Width, Is.EqualTo(480));
+
+                playerType.GetProperty("Hp").SetValue(player, 50);
+                Assert.That(((TextBlock)elements["CurrentHp"]).Text, Is.EqualTo("50"));
+                Assert.That(elements["HpFill"].Width, Is.EqualTo(160));
+                playerType.GetProperty("MaxHp").SetValue(player, 100);
+                Assert.That(((TextBlock)elements["MaximumHp"]).Text, Is.EqualTo("100"));
+                Assert.That(elements["HpFill"].Width, Is.EqualTo(320));
+                playerType.GetProperty("Name").SetValue(player, "새벽 탐험가");
+                viewModelType.GetProperty("Gold").SetValue(viewModel, 331);
+                Assert.That(((TextBlock)elements["PlayerName"]).Text, Is.EqualTo("새벽 탐험가"));
+                Assert.That(((TextBlock)elements["GoldAmount"]).Text, Is.EqualTo("331"));
+
+                var replacement = System.Activator.CreateInstance(playerType);
+                playerType.GetProperty("Name").SetValue(replacement, "별빛 탐험가");
+                playerType.GetProperty("MaxHp").SetValue(replacement, 150);
+                playerType.GetProperty("Hp").SetValue(replacement, 150);
+                viewModelType.GetProperty("Player").SetValue(viewModel, replacement);
+                playerType.GetProperty("Hp").SetValue(player, 0);
+                Assert.That(((TextBlock)elements["PlayerName"]).Text, Is.EqualTo("별빛 탐험가"));
+                Assert.That(((TextBlock)elements["CurrentHp"]).Text, Is.EqualTo("150"));
+                Assert.That(((TextBlock)elements["MaximumHp"]).Text, Is.EqualTo("150"));
+                Assert.That(elements["HpFill"].Width, Is.EqualTo(640));
+                playerType.GetProperty("Hp").SetValue(replacement, 0);
+                Assert.That(((TextBlock)elements["CurrentHp"]).Text, Is.EqualTo("0"));
+                Assert.That(elements["HpFill"].Width, Is.Zero);
+            }
+            finally
+            {
+                root.DataContext = null;
+            }
+        }
+
+        [Test]
+        public void RatioToWidthConverterUsesInvariantParameterAndRejectsConvertBack()
+        {
+            var converterType = System.Type.GetType("Xamlity.Samples.Binding.RatioToWidthConverter, Assembly-CSharp", true);
+            var converter = (IValueConverter)System.Activator.CreateInstance(converterType);
+            var previousCulture = CultureInfo.CurrentCulture;
+            try
+            {
+                CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("fr-FR");
+                Assert.That(converter.Convert(0.5, typeof(double), "640.5", CultureInfo.CurrentCulture), Is.EqualTo(320.25));
+                Assert.Throws<System.NotSupportedException>(() =>
+                    converter.ConvertBack(320.25, typeof(double), "640.5", CultureInfo.CurrentCulture));
+            }
+            finally
+            {
+                CultureInfo.CurrentCulture = previousCulture;
+            }
+        }
+
+        [Test]
+        public void BindingSampleSceneConnectsDemoAndCyclesPlayerStatus()
+        {
+            var scene = EditorSceneManager.OpenScene("Assets/Scenes/BindingSample.unity", OpenSceneMode.Additive);
+            try
+            {
+                var roots = scene.GetRootGameObjects()
+                    .SelectMany(gameObject => gameObject.GetComponentsInChildren<XamlityRoot>(true)).ToList();
+                Assert.That(roots.Count, Is.EqualTo(1));
+                var root = roots[0];
+                var serialized = new SerializedObject(root);
+                Assert.That(serialized.FindProperty("xaml").objectReferenceValue,
+                    Is.SameAs(AssetDatabase.LoadAssetAtPath<XamlAsset>(PlayerStatusPath)));
+                Assert.That(serialized.FindProperty("referenceResolution").vector2IntValue,
+                    Is.EqualTo(new Vector2Int(1920, 1080)));
+                var demoType = System.Type.GetType("Xamlity.Samples.Binding.PlayerStatusDemo, Assembly-CSharp", true);
+                var demos = scene.GetRootGameObjects()
+                    .SelectMany(gameObject => gameObject.GetComponentsInChildren(demoType, true)).ToList();
+                Assert.That(demos.Count, Is.EqualTo(1));
+                var demo = demos[0];
+                Assert.That(new SerializedObject(demo).FindProperty("root").objectReferenceValue, Is.SameAs(root));
+                var camera = scene.GetRootGameObjects().SelectMany(gameObject => gameObject.GetComponentsInChildren<Camera>()).Single();
+                Assert.That(camera.name, Is.EqualTo("Main Camera"));
+                Assert.That(camera.CompareTag("MainCamera"), Is.True);
+                Assert.That(camera.GetComponent<UnityEngine.Rendering.Universal.UniversalAdditionalCameraData>(), Is.Not.Null);
+
+                typeof(XamlityRoot).GetMethod("Awake", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(root, null);
+                demoType.GetMethod("Start", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(demo, null);
+                var viewModel = root.DataContext;
+                Assert.That(viewModel, Is.Not.Null);
+                var player = viewModel.GetType().GetProperty("Player").GetValue(viewModel);
+                var hp = player.GetType().GetProperty("Hp");
+                var gold = viewModel.GetType().GetProperty("Gold");
+                Assert.That(hp.GetValue(player), Is.EqualTo(150));
+                Assert.That(gold.GetValue(viewModel), Is.EqualTo(1200));
+                for (int tick = 1; tick <= 11; tick++)
+                {
+                    demoType.GetField("elapsed", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(demo, 1f);
+                    demoType.GetMethod("Update", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(demo, null);
+                    Assert.That(hp.GetValue(player), Is.EqualTo(tick <= 10 ? 150 - tick * 15 : 150));
+                    Assert.That(gold.GetValue(viewModel), Is.EqualTo(1200 + tick * 10));
+                }
             }
             finally
             {

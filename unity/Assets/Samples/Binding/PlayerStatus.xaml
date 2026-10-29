@@ -1,0 +1,60 @@
+<Border xmlns="https://github.com/loonacia/xamlity"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Xamlity.Samples.Binding;assembly=Assembly-CSharp"
+        x:DataType="local:PlayerStatusViewModel" Background="#0B1424" Padding="72">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <StackPanel>
+            <TextBlock Text="XAMLITY / LIVE STATUS" FontSize="22" Foreground="#6CCFF6" />
+            <TextBlock Text="탐험가의 여정" FontSize="48" Foreground="White" Margin="0,12,0,0" />
+        </StackPanel>
+
+        <Border Grid.Row="1" Width="1200" HorizontalAlignment="Center" VerticalAlignment="Center"
+                Background="#182D46" BorderBrush="#6CCFF6" BorderThickness="2" CornerRadius="24" Padding="48">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="760" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <StackPanel DataContext="{Binding Player}" x:DataType="local:PlayerModel">
+                    <TextBlock Text="플레이어" FontSize="22" Foreground="#A4BED5" />
+                    <TextBlock x:Name="PlayerName" Text="{Binding Name}" FontSize="44" Foreground="White" Margin="0,10,0,36" />
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,18">
+                        <TextBlock Text="체력 / HP" FontSize="26" Foreground="#A4BED5" Margin="0,0,24,0" />
+                        <TextBlock x:Name="CurrentHp" Text="{Binding Hp}" FontSize="32" Foreground="#79E3C1" />
+                        <TextBlock Text=" / " FontSize="32" Foreground="#A4BED5" />
+                        <TextBlock x:Name="MaximumHp" Text="{Binding MaxHp}" FontSize="32" Foreground="#A4BED5" />
+                    </StackPanel>
+                    <Border Width="640" Height="28" HorizontalAlignment="Left" Background="#0B1424" CornerRadius="14">
+                        <Border x:Name="HpFill" Height="28" HorizontalAlignment="Left" Background="#79E3C1" CornerRadius="14">
+                            <Border.Width>
+                                <Binding Path="HpRatio" ConverterParameter="640">
+                                    <Binding.Converter>
+                                        <local:RatioToWidthConverter />
+                                    </Binding.Converter>
+                                </Binding>
+                            </Border.Width>
+                        </Border>
+                    </Border>
+                    <TextBlock Text="체력이 소진되면 다시 회복합니다." FontSize="22" Foreground="#A4BED5" Margin="0,24,0,0" />
+                </StackPanel>
+                <Border Grid.Column="1" Background="#243951" CornerRadius="18" Padding="28" VerticalAlignment="Center">
+                    <StackPanel>
+                        <TextBlock Text="보유 골드" FontSize="24" Foreground="#A4BED5" />
+                        <TextBlock x:Name="GoldAmount" Text="{Binding Gold}" FontSize="48" Foreground="#FFD580" Margin="0,16,0,0" />
+                        <TextBlock Text="매초 +10 G" FontSize="22" Foreground="#FFD580" Margin="0,12,0,0" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Border>
+
+        <StackPanel Grid.Row="2">
+            <TextBlock Text="매초 체력과 골드가 갱신됩니다. 탐험은 계속됩니다." FontSize="24" Foreground="White" />
+            <TextBlock x:Name="BindingLiteral" Text="{}{Binding}" FontSize="20" Foreground="#6CCFF6" Margin="0,12,0,0" />
+        </StackPanel>
+    </Grid>
+</Border>
