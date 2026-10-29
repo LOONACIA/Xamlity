@@ -185,6 +185,28 @@ namespace Xamlity.Editor.Tests
         }
 
         [Test]
+        public void GameCameraPreservesGraySrgbTextInLinearColorSpace()
+        {
+            Assert.That(QualitySettings.activeColorSpace, Is.EqualTo(ColorSpace.Linear),
+                "This sRGB pixel regression test requires a Linear color space project.");
+            CreateFont();
+            var root = CreateRoot(KoreanTextPath, fontAsset);
+            ((TextBlock)root.Tree.RootElement).Foreground = new SolidColorBrush(CoreColor.FromRgb(128, 128, 128));
+            root.Refresh(256, 128);
+            var size = root.Tree.RootElement.RenderSize;
+            Render(CreateCamera());
+
+            float maximumRed = 0;
+            for (int y = 0; y < 128; y++)
+                for (int x = 0; x < 256; x++)
+                    if (x < size.Width && 127 - y < size.Height)
+                        maximumRed = Mathf.Max(maximumRed, pixels.GetPixel(x, y).r);
+
+            Assert.That(maximumRed, Is.EqualTo(128 / 255f).Within(3 / 255f),
+                "Fully covered glyph pixels must preserve the sRGB foreground color.");
+        }
+
+        [Test]
         public void UnchangedTextRefreshReusesMeshWithoutAllocating()
         {
             CreateFont();
@@ -316,6 +338,22 @@ namespace Xamlity.Editor.Tests
             for (int y = 0; y < 128; y++)
                 for (int x = 0; x < 256; x++)
                     AssertPixel(x, y, y >= 64 ? Color.red : Color.black);
+        }
+
+        [Test]
+        public void GameCameraPreservesGraySrgbBackgroundInLinearColorSpace()
+        {
+            Assert.That(QualitySettings.activeColorSpace, Is.EqualTo(ColorSpace.Linear),
+                "This sRGB pixel regression test requires a Linear color space project.");
+            var root = CreateRoot();
+            ((Border)root.Tree.RootElement).Background = new SolidColorBrush(CoreColor.FromRgb(128, 128, 128));
+            root.Refresh(256, 128);
+            Render(CreateCamera());
+
+            Color actual = pixels.GetPixel(128, 96);
+            Assert.That(actual.r, Is.EqualTo(128 / 255f).Within(2 / 255f), "Red inside the gray band");
+            Assert.That(actual.g, Is.EqualTo(128 / 255f).Within(2 / 255f), "Green inside the gray band");
+            Assert.That(actual.b, Is.EqualTo(128 / 255f).Within(2 / 255f), "Blue inside the gray band");
         }
 
         [Test]

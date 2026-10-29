@@ -18,6 +18,7 @@ Shader "Xamlity/Text"
             #pragma vertex Vert
             #pragma fragment Frag
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Color.hlsl"
 
             float4x4 _XamlityProjection;
             TEXTURE2D(_MainTex);
@@ -42,6 +43,9 @@ Shader "Xamlity/Text"
                 Varyings output;
                 output.position = mul(_XamlityProjection, float4(input.position, 1));
                 output.color = input.color;
+                #if !defined(UNITY_COLORSPACE_GAMMA)
+                output.color.rgb = SRGBToLinear(output.color.rgb);
+                #endif
                 output.uv = input.uv;
                 return output;
             }
