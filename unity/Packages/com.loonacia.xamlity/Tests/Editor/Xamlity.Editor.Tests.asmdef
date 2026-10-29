@@ -9,6 +9,7 @@
     "Xamlity.Core",
     "Xamlity.Unity",
     "Xamlity.Editor",
+    "Unity.TextMeshPro",
     "UnityEngine.TestRunner",
     "UnityEditor.TestRunner"
   ]
