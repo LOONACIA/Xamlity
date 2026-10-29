@@ -186,7 +186,7 @@ namespace Xamlity.Core.Tests.Markup
         [TestCase("Unknown=\"1\"", "Unknown or read-only property 'Unknown' on type 'Border'.")]
         [TestCase("IsMeasureValid=\"true\"", "Unknown or read-only property 'IsMeasureValid' on type 'Border'.")]
         [TestCase("RenderSize=\"1\"", "Unknown or read-only property 'RenderSize' on type 'Border'.")]
-        [TestCase("Grid.Row=\"1\"", "Unknown type 'Grid'.")]
+        [TestCase("MissingGrid.Row=\"1\"", "Unknown type 'MissingGrid'.")]
         [TestCase("Width=\"12px\"", "Property 'Width': '12px' is not a valid Double value.")]
         [TestCase("MinWidth=\"Auto\"", "Property 'MinWidth': 'Auto' is not a valid Double value.")]
         [TestCase("Child=\"TextBlock\"", "Property 'Child': Cannot convert text to type 'Xamlity.Tree.UIElement'.")]

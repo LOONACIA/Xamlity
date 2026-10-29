@@ -53,6 +53,21 @@ namespace Xamlity.Markup
                     // EnumConverter wraps invalid names and numeric overflow in FormatException.
                 }
             }
+            else if (targetType == typeof(GridLength))
+            {
+                string token = text.Trim();
+                if (string.Equals(token, "Auto", StringComparison.OrdinalIgnoreCase))
+                    value = GridLength.Auto;
+                else
+                {
+                    bool star = token.EndsWith("*", StringComparison.Ordinal);
+                    string numberText = star ? token.Substring(0, token.Length - 1) : token;
+                    if (star && numberText.Length == 0)
+                        numberText = "1";
+                    if (TryDouble(numberText, out double number) && number >= 0 && !double.IsInfinity(number))
+                        value = new GridLength(number, star ? GridUnitType.Star : GridUnitType.Pixel);
+                }
+            }
             else if (targetType == typeof(Thickness))
             {
                 if (TryThickness(text, out Thickness thickness))
