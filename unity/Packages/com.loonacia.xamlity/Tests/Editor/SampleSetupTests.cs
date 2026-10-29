@@ -1,13 +1,19 @@
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using NUnit.Framework;
 using TMPro;
 using UnityEditor;
 using UnityEditor.SceneManagement;
+using UnityEngine;
 using UnityEngine.TextCore.LowLevel;
 using Xamlity.Controls;
 using Xamlity.Layout;
+using Xamlity.Rendering;
+using Xamlity.Tree;
 using Xamlity.Unity;
+using Canvas = Xamlity.Layout.Canvas;
+using Grid = Xamlity.Layout.Grid;
 
 namespace Xamlity.Editor.Tests
 {
@@ -15,6 +21,8 @@ namespace Xamlity.Editor.Tests
     public class SampleSetupTests
     {
         private const string HelloPath = "Assets/Samples/Hello/Hello.xaml";
+        private const string HudPath = "Assets/Samples/Hud/Hud.xaml";
+        private const string PanelPath = "Assets/Samples/Hud/Panel.png";
 
         [Test]
         public void SettingsLoadCachedDynamicFontWithSourceAndEmptyAtlas()
@@ -81,6 +89,67 @@ namespace Xamlity.Editor.Tests
             finally
             {
                 EditorSceneManager.CloseScene(scene, true);
+            }
+        }
+
+        [Test]
+        public void HudBuildsGridCanvasAndNineSliceSpriteImage()
+        {
+            var asset = AssetDatabase.LoadAssetAtPath<XamlAsset>(HudPath);
+
+            Assert.That(asset, Is.Not.Null);
+            Assert.That(asset.HasIr, Is.True);
+            var elements = DescendantsAndSelf(asset.Build()).ToList();
+            Assert.That(elements.OfType<Grid>(), Is.Not.Empty);
+            Assert.That(elements.OfType<Canvas>(), Is.Not.Empty);
+            var image = elements.OfType<Image>().Single();
+            Assert.That(image.Stretch, Is.EqualTo(Stretch.Fill));
+            Assert.That(image.Source, Is.TypeOf<UnityImageSource>());
+            var sprite = AssetDatabase.LoadAssetAtPath<Sprite>(PanelPath);
+            Assert.That(sprite, Is.Not.Null);
+            Assert.That(((UnityImageSource)image.Source).Sprite, Is.SameAs(sprite));
+            Assert.That(sprite.border, Is.EqualTo(new Vector4(12, 12, 12, 12)));
+            var importer = (TextureImporter)AssetImporter.GetAtPath(PanelPath);
+            Assert.That(importer.spriteImportMode, Is.EqualTo(SpriteImportMode.Single));
+            Assert.That(importer.mipmapEnabled, Is.False);
+        }
+
+        [Test]
+        public void HudSampleSceneReferencesHudWithFullHdReferenceResolution()
+        {
+            var scene = EditorSceneManager.OpenScene("Assets/Scenes/HudSample.unity", OpenSceneMode.Additive);
+            try
+            {
+                var roots = new List<XamlityRoot>();
+                foreach (var gameObject in scene.GetRootGameObjects())
+                    roots.AddRange(gameObject.GetComponentsInChildren<XamlityRoot>(true));
+                Assert.That(roots.Count, Is.EqualTo(1));
+                var root = roots[0];
+                var serialized = new SerializedObject(root);
+                Assert.That(serialized.FindProperty("xaml").objectReferenceValue,
+                    Is.SameAs(AssetDatabase.LoadAssetAtPath<XamlAsset>(HudPath)));
+                Assert.That(serialized.FindProperty("referenceResolution").vector2IntValue,
+                    Is.EqualTo(new Vector2Int(1920, 1080)));
+            }
+            finally
+            {
+                EditorSceneManager.CloseScene(scene, true);
+            }
+        }
+
+        private static IEnumerable<UIElement> DescendantsAndSelf(UIElement element)
+        {
+            yield return element;
+            if (element is Panel panel)
+            {
+                foreach (var child in panel.Children)
+                    foreach (var descendant in DescendantsAndSelf(child))
+                        yield return descendant;
+            }
+            else if (element is Border border && border.Child != null)
+            {
+                foreach (var descendant in DescendantsAndSelf(border.Child))
+                    yield return descendant;
             }
         }
     }

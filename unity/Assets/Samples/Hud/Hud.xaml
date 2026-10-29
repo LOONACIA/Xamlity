@@ -1,0 +1,79 @@
+<Border xmlns="https://github.com/loonacia/xamlity" Background="#0B1424" Padding="48">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" MinHeight="112" />
+            <RowDefinition Height="*" MinHeight="480" />
+            <RowDefinition Height="Auto" MinHeight="100" MaxHeight="160" />
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="420" />
+            <ColumnDefinition Width="*" MinWidth="480" />
+            <ColumnDefinition Width="Auto" MinWidth="320" MaxWidth="420" />
+        </Grid.ColumnDefinitions>
+
+        <Border Grid.ColumnSpan="3" BorderBrush="#6CCFF6" BorderThickness="2" CornerRadius="24" Padding="28,20">
+            <Border.Background>
+                <SolidColorBrush Color="#182D46" />
+            </Border.Background>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="420" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="탐험가 / EXPLORER" FontSize="20" Foreground="#A4BED5" />
+                    <TextBlock Text="HP 120 / 150" FontSize="32" Foreground="#79E3C1" Margin="0,4,0,0" />
+                </StackPanel>
+                <TextBlock Grid.Column="1" Text="별빛의 숲" FontSize="36" Foreground="White"
+                           TextAlignment="Center" VerticalAlignment="Center" />
+                <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                    <TextBlock Text="CHAPTER 03" FontSize="20" Foreground="#6CCFF6" TextAlignment="Right" />
+                    <TextBlock Text="밤의 탐사  /  21:40" FontSize="22" Foreground="White" Margin="0,6,0,0" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1" Height="560" VerticalAlignment="Top" Margin="0,32,0,0">
+            <Image Source="Panel.png" Stretch="Fill" />
+            <StackPanel Margin="32">
+                <TextBlock Text="진행 중인 퀘스트" FontSize="20" Foreground="#6CCFF6" />
+                <TextBlock Text="잃어버린 별의 조각" FontSize="28" Foreground="White" Margin="0,12,0,18" />
+                <TextBlock Text="오래된 숲의 길을 따라 빛나는 표식까지 이동하세요. 안개 너머에 흩어진 별의 조각 세 개를 모아 마을의 수호자에게 전해 주세요. 작은 빛이 모이면 잠들어 있던 숲이 다시 깨어납니다."
+                           FontSize="24" Foreground="#D5E5F0" TextWrapping="Wrap" TextAlignment="Left" />
+                <TextBlock Text="별의 조각  1 / 3" FontSize="22" Foreground="#79E3C1" Margin="0,22,0,0" />
+            </StackPanel>
+        </Grid>
+
+        <Canvas Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Margin="32">
+            <Border Canvas.Left="190" Canvas.Top="160" Width="88" Height="88" CornerRadius="44"
+                    BorderBrush="#79E3C1" BorderThickness="3" Background="#23433F">
+                <TextBlock Text="01" FontSize="30" Foreground="White" TextAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <StackPanel Canvas.Left="304" Canvas.Top="166">
+                <TextBlock Text="빛나는 표식" FontSize="28" Foreground="White" />
+                <TextBlock Text="목표까지 128 m" FontSize="22" Foreground="#79E3C1" Margin="0,8,0,0" />
+            </StackPanel>
+            <Border Canvas.Right="24" Canvas.Bottom="64" Width="260" CornerRadius="16" Padding="20"
+                    BorderBrush="#6CCFF6" BorderThickness="1" Background="#243951" Opacity="0.55">
+                <TextBlock Text="북쪽 관측소&#10;신호를 찾는 중..." FontSize="24" Foreground="White" TextAlignment="Center" />
+            </Border>
+        </Canvas>
+
+        <Border Grid.Row="2" Grid.ColumnSpan="2" CornerRadius="18" Background="#182D46" Padding="24,18" Margin="0,0,24,0">
+            <StackPanel>
+                <TextBlock Text="탐사 기록" FontSize="20" Foreground="#6CCFF6" />
+                <TextBlock Text="숲의 입구에 도착했습니다. 새로운 여정을 시작하세요." FontSize="24" Foreground="White" Margin="0,8,0,0" />
+            </StackPanel>
+        </Border>
+        <Border Grid.Row="2" Grid.Column="2" Width="400" BorderBrush="#6CCFF6" BorderThickness="1" Padding="20,14" Background="#182D46">
+            <StackPanel>
+                <TextBlock Text="수신 중인 메시지" FontSize="20" Foreground="#A4BED5" Margin="0,0,0,8" />
+                <Canvas Height="34" ClipToBounds="True">
+                    <TextBlock Canvas.Left="0" Canvas.Top="0" Text="관측소: 숲 너머에서 새로운 신호가 감지되었습니다. 탐사대는 표식을 확인하세요."
+                               FontSize="24" Foreground="White" />
+                </Canvas>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Border>
