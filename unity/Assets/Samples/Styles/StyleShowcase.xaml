@@ -26,12 +26,12 @@
                         <ControlTemplate TargetType="ContentControl">
                             <Border x:Name="BadgeBorder" Background="{TemplateBinding Background}"
                                     Padding="{TemplateBinding Padding}" CornerRadius="18"
-                                    BorderBrush="{StaticResource TextBrush}" BorderThickness="0">
+                                    BorderBrush="{TemplateBinding Background}" BorderThickness="3">
                                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="Content" Value="위험">
-                                    <Setter TargetName="BadgeBorder" Property="BorderThickness" Value="3" />
+                                    <Setter TargetName="BadgeBorder" Property="BorderBrush" Value="{StaticResource TextBrush}" />
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>

@@ -339,6 +339,7 @@ namespace Xamlity.Editor.Tests
                 tree.UpdateLayout(new Size(1920, 1080));
                 var border = (Border)badge.GetTemplateChild("BadgeBorder");
                 var presenter = (ContentPresenter)border.Child;
+                Size badgeSize = border.RenderSize;
                 foreach (string value in new[] { "정상", "위험", "정상" })
                 {
                     status.SetValue(viewModel, value);
@@ -347,7 +348,9 @@ namespace Xamlity.Editor.Tests
                     Assert.That(badge.Background, Is.SameAs(app[value == "위험" ? "WarningBrush" : "AccentBrush"]));
                     Assert.That(border.Background, Is.SameAs(badge.Background));
                     Assert.That(border.Padding, Is.EqualTo(new Thickness(40, 24, 40, 24)));
-                    Assert.That(border.BorderThickness, Is.EqualTo(new Thickness(value == "위험" ? 3 : 0)));
+                    Assert.That(border.BorderThickness, Is.EqualTo(new Thickness(3)));
+                    Assert.That(border.BorderBrush, Is.SameAs(value == "위험" ? app["TextBrush"] : badge.Background));
+                    Assert.That(border.RenderSize, Is.EqualTo(badgeSize));
                     Assert.That(presenter.Content, Is.EqualTo(value));
                     var text = (TextBlock)presenter.GetInheritanceChild(0);
                     Assert.That(text.Text, Is.EqualTo(value));
