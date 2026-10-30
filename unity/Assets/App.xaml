@@ -1,0 +1,11 @@
+<ResourceDictionary xmlns="https://github.com/loonacia/xamlity"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="Samples/Styles/Palette.xaml" />
+    </ResourceDictionary.MergedDictionaries>
+    <Style x:Key="CardStyle" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource PanelBrush}" />
+        <Setter Property="CornerRadius" Value="24" />
+        <Setter Property="Padding" Value="40" />
+    </Style>
+</ResourceDictionary>

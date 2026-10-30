@@ -1,0 +1,8 @@
+<ResourceDictionary xmlns="https://github.com/loonacia/xamlity"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <SolidColorBrush x:Key="BackgroundBrush" Color="#0B1424" />
+    <SolidColorBrush x:Key="PanelBrush" Color="#182D46" />
+    <SolidColorBrush x:Key="AccentBrush" Color="#258B78" />
+    <SolidColorBrush x:Key="WarningBrush" Color="#B04450" />
+    <SolidColorBrush x:Key="TextBrush" Color="#F2F6FC" />
+</ResourceDictionary>

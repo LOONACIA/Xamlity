@@ -12,6 +12,7 @@ using Xamlity.Controls;
 using Xamlity.Data;
 using Xamlity.Layout;
 using Xamlity.Rendering;
+using Xamlity.Styling;
 using Xamlity.Tree;
 using Xamlity.Unity;
 using Canvas = Xamlity.Layout.Canvas;
@@ -26,6 +27,9 @@ namespace Xamlity.Editor.Tests
         private const string HudPath = "Assets/Samples/Hud/Hud.xaml";
         private const string PanelPath = "Assets/Samples/Hud/Panel.png";
         private const string PlayerStatusPath = "Assets/Samples/Binding/PlayerStatus.xaml";
+        private const string AppPath = "Assets/App.xaml";
+        private const string PalettePath = "Assets/Samples/Styles/Palette.xaml";
+        private const string StyleShowcasePath = "Assets/Samples/Styles/StyleShowcase.xaml";
 
         [Test]
         public void SettingsLoadCachedDynamicFontWithSourceAndEmptyAtlas()
@@ -259,6 +263,148 @@ namespace Xamlity.Editor.Tests
                     demoType.GetMethod("Update", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(demo, null);
                     Assert.That(hp.GetValue(player), Is.EqualTo(tick <= 10 ? 150 - tick * 15 : 150));
                     Assert.That(gold.GetValue(viewModel), Is.EqualTo(1200 + tick * 10));
+                }
+            }
+            finally
+            {
+                EditorSceneManager.CloseScene(scene, true);
+            }
+        }
+
+        [TestCase(AppPath)]
+        [TestCase(PalettePath)]
+        [TestCase(StyleShowcasePath)]
+        public void StyleSampleAssetsHaveImportedIr(string path)
+        {
+            var asset = AssetDatabase.LoadAssetAtPath<XamlAsset>(path);
+            Assert.That(asset, Is.Not.Null);
+            Assert.That(asset.HasIr, Is.True);
+        }
+
+        [Test]
+        public void StyleSampleUsesApplicationPaletteImplicitStylesAndTheme()
+        {
+            var appAsset = AssetDatabase.LoadAssetAtPath<XamlAsset>(AppPath);
+            Assert.That(XamlitySettings.Load().ApplicationResources, Is.SameAs(appAsset));
+            var theme = Resources.Load<XamlAsset>("Xamlity/Generic").BuildResourceDictionary(null);
+            var app = appAsset.BuildResourceDictionary(theme);
+            Assert.That(app.Keys.Cast<object>(), Is.EquivalentTo(new object[] { "CardStyle" }));
+            Assert.That(app.MergedDictionaries.Count, Is.EqualTo(1));
+            var palette = app.MergedDictionaries[0];
+            Assert.That(palette.Source.OriginalString, Is.EqualTo("Samples/Styles/Palette.xaml"));
+            Assert.That(palette.Count, Is.EqualTo(5));
+            var root = (FrameworkElement)AssetDatabase.LoadAssetAtPath<XamlAsset>(StyleShowcasePath).Build(app, theme);
+            var tree = new UIRoot(root, null, default, app, theme);
+            tree.UpdateLayout(new Size(1920, 1080));
+            var elements = DescendantsAndSelf(root).OfType<FrameworkElement>()
+                .Where(element => !string.IsNullOrEmpty(element.Name)).ToDictionary(element => element.Name);
+            var introduction = (TextBlock)elements["Introduction"];
+            Assert.That(introduction.Style, Is.SameAs(root.Resources[typeof(TextBlock)]));
+            Assert.That(introduction.Foreground, Is.SameAs(palette["TextBrush"]));
+            Assert.That(introduction.FontSize, Is.EqualTo(root.Resources["BodyFontSize"]));
+            Assert.That(((Style)root.Resources["HeadingStyle"]).BasedOn, Is.SameAs(introduction.Style));
+            var card = (Border)elements["ResourceCard"];
+            Assert.That(card.Style.BasedOn, Is.SameAs(app["CardStyle"]));
+            Assert.That(card.Background, Is.SameAs(palette["PanelBrush"]));
+            Assert.That(card.BorderBrush, Is.SameAs(palette["AccentBrush"]));
+            Assert.That(card.Padding, Is.EqualTo(new Thickness(40)));
+            var userControl = (UserControl)elements["ThemeCard"];
+            var themeStyle = (Style)theme[typeof(UserControl)];
+            Assert.That(userControl.Template, Is.SameAs(themeStyle.Setters.Cast<Setter>()
+                .Single(setter => setter.Property == Control.TemplateProperty).Value));
+            Assert.That(userControl.ApplyTemplate(), Is.False);
+            var border = (Border)userControl.GetInheritanceChild(0);
+            Assert.That(border.TemplatedParent, Is.SameAs(userControl));
+            Assert.That(border.Background, Is.SameAs(palette["BackgroundBrush"]));
+            Assert.That(border.BorderBrush, Is.SameAs(palette["AccentBrush"]));
+            Assert.That(border.BorderThickness, Is.EqualTo(new Thickness(2)));
+            Assert.That(border.Padding, Is.EqualTo(new Thickness(28)));
+            Assert.That(border.Child, Is.TypeOf<ContentPresenter>());
+        }
+
+        [Test]
+        public void StyleSampleStatusUpdatesStyleAndNamedTemplateTriggersAndRestoresValues()
+        {
+            var theme = Resources.Load<XamlAsset>("Xamlity/Generic").BuildResourceDictionary(null);
+            var app = AssetDatabase.LoadAssetAtPath<XamlAsset>(AppPath).BuildResourceDictionary(theme);
+            var root = (FrameworkElement)AssetDatabase.LoadAssetAtPath<XamlAsset>(StyleShowcasePath).Build(app, theme);
+            var tree = new UIRoot(root, null, default, app, theme);
+            var badge = DescendantsAndSelf(root).OfType<ContentControl>().Single(element => element.Name == "StatusBadge");
+            var viewModelType = System.Type.GetType("Xamlity.Samples.Styles.StyleShowcaseViewModel, Assembly-CSharp", true);
+            var viewModel = System.Activator.CreateInstance(viewModelType);
+            var status = viewModelType.GetProperty("Status");
+            try
+            {
+                root.DataContext = viewModel;
+                tree.UpdateLayout(new Size(1920, 1080));
+                var border = (Border)badge.GetTemplateChild("BadgeBorder");
+                var presenter = (ContentPresenter)border.Child;
+                foreach (string value in new[] { "정상", "위험", "정상" })
+                {
+                    status.SetValue(viewModel, value);
+                    tree.UpdateLayout(new Size(1920, 1080));
+                    Assert.That(badge.Content, Is.EqualTo(value));
+                    Assert.That(badge.Background, Is.SameAs(app[value == "위험" ? "WarningBrush" : "AccentBrush"]));
+                    Assert.That(border.Background, Is.SameAs(badge.Background));
+                    Assert.That(border.Padding, Is.EqualTo(new Thickness(40, 24, 40, 24)));
+                    Assert.That(border.BorderThickness, Is.EqualTo(new Thickness(value == "위험" ? 3 : 0)));
+                    Assert.That(presenter.Content, Is.EqualTo(value));
+                    var text = (TextBlock)presenter.GetInheritanceChild(0);
+                    Assert.That(text.Text, Is.EqualTo(value));
+                    Assert.That(text.Foreground, Is.SameAs(app["TextBrush"]));
+                    Assert.That(text.FontSize, Is.EqualTo(26d));
+                }
+            }
+            finally
+            {
+                root.DataContext = null;
+            }
+        }
+
+        [Test]
+        public void StyleSampleSceneConnectsDemoAndCyclesStatusEveryThreeSeconds()
+        {
+            var scene = EditorSceneManager.OpenScene("Assets/Scenes/StyleSample.unity", OpenSceneMode.Additive);
+            try
+            {
+                var roots = scene.GetRootGameObjects()
+                    .SelectMany(gameObject => gameObject.GetComponentsInChildren<XamlityRoot>(true)).ToList();
+                Assert.That(roots.Count, Is.EqualTo(1));
+                var root = roots[0];
+                var serialized = new SerializedObject(root);
+                Assert.That(serialized.FindProperty("xaml").objectReferenceValue,
+                    Is.SameAs(AssetDatabase.LoadAssetAtPath<XamlAsset>(StyleShowcasePath)));
+                Assert.That(serialized.FindProperty("referenceResolution").vector2IntValue,
+                    Is.EqualTo(new Vector2Int(1920, 1080)));
+                var demoType = System.Type.GetType("Xamlity.Samples.Styles.StyleShowcaseDemo, Assembly-CSharp", true);
+                var demos = scene.GetRootGameObjects()
+                    .SelectMany(gameObject => gameObject.GetComponentsInChildren(demoType, true)).ToList();
+                Assert.That(demos.Count, Is.EqualTo(1));
+                var demo = demos[0];
+                Assert.That(new SerializedObject(demo).FindProperty("root").objectReferenceValue, Is.SameAs(root));
+                var camera = scene.GetRootGameObjects().SelectMany(gameObject => gameObject.GetComponentsInChildren<Camera>()).Single();
+                Assert.That(camera.name, Is.EqualTo("Main Camera"));
+                Assert.That(camera.CompareTag("MainCamera"), Is.True);
+                var cameraData = camera.GetComponent<UnityEngine.Rendering.Universal.UniversalAdditionalCameraData>();
+                Assert.That(cameraData, Is.Not.Null);
+                Assert.That(cameraData.renderPostProcessing, Is.True);
+
+                typeof(XamlityRoot).GetMethod("Awake", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(root, null);
+                demoType.GetMethod("Start", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(demo, null);
+                Assert.That(root.Tree, Is.Not.Null);
+                var viewModel = root.DataContext;
+                var status = viewModel.GetType().GetProperty("Status");
+                Assert.That(status.GetValue(viewModel), Is.EqualTo("정상"));
+                var elapsed = demoType.GetField("elapsed", BindingFlags.Instance | BindingFlags.NonPublic);
+                var update = demoType.GetMethod("Update", BindingFlags.Instance | BindingFlags.NonPublic);
+                elapsed.SetValue(demo, 0f);
+                update.Invoke(demo, null);
+                Assert.That(status.GetValue(viewModel), Is.EqualTo("정상"));
+                foreach (string value in new[] { "위험", "정상", "위험" })
+                {
+                    elapsed.SetValue(demo, 3f);
+                    update.Invoke(demo, null);
+                    Assert.That(status.GetValue(viewModel), Is.EqualTo(value));
                 }
             }
             finally

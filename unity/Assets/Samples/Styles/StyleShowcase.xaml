@@ -1,0 +1,113 @@
+<Border xmlns="https://github.com/loonacia/xamlity"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Xamlity.Samples.Styles;assembly=Assembly-CSharp"
+        x:DataType="local:StyleShowcaseViewModel" Background="{StaticResource BackgroundBrush}" Padding="72">
+    <Border.Resources>
+        <local:StyleShowcaseResources>
+            <Style TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                <Setter Property="FontSize" Value="{StaticResource BodyFontSize}" />
+            </Style>
+            <Style x:Key="HeadingStyle" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                <Setter Property="FontSize" Value="36" />
+                <Setter Property="Margin" Value="0,12,0,24" />
+            </Style>
+            <Style x:Key="AccentCardStyle" TargetType="Border" BasedOn="{StaticResource CardStyle}">
+                <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                <Setter Property="BorderThickness" Value="2" />
+            </Style>
+            <Style x:Key="StatusBadgeStyle" TargetType="ContentControl">
+                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                <Setter Property="FontSize" Value="{StaticResource BodyFontSize}" />
+                <Setter Property="Background" Value="{StaticResource AccentBrush}" />
+                <Setter Property="Padding" Value="40,24" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ContentControl">
+                            <Border x:Name="BadgeBorder" Background="{TemplateBinding Background}"
+                                    Padding="{TemplateBinding Padding}" CornerRadius="18"
+                                    BorderBrush="{StaticResource TextBrush}" BorderThickness="0">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="Content" Value="위험">
+                                    <Setter TargetName="BadgeBorder" Property="BorderThickness" Value="3" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+                <Style.Triggers>
+                    <Trigger Property="Content" Value="위험">
+                        <Setter Property="Background" Value="{StaticResource WarningBrush}" />
+                    </Trigger>
+                </Style.Triggers>
+            </Style>
+        </local:StyleShowcaseResources>
+    </Border.Resources>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <StackPanel>
+            <TextBlock Text="XAMLITY / STYLE SHOWCASE" FontSize="22" />
+            <TextBlock Text="스타일로 만드는 하나의 화면" FontSize="52" Margin="0,12,0,16" />
+            <TextBlock x:Name="Introduction" Text="공유 팔레트에서 시작해, 상태에 반응하는 템플릿까지." />
+        </StackPanel>
+        <Grid Grid.Row="1" Margin="0,48,0,48">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Border x:Name="ResourceCard" Style="{StaticResource AccentCardStyle}" Margin="0,0,24,0">
+                <StackPanel>
+                    <TextBlock Text="01 / RESOURCES" FontSize="22" />
+                    <TextBlock Text="함께 쓰는 스타일" Style="{StaticResource HeadingStyle}" />
+                    <TextBlock Text="앱에서 가져온 카드 스타일에 강조 테두리를 더했습니다."
+                               TextWrapping="Wrap" Margin="0,0,0,32" />
+                    <Border Style="{StaticResource CardStyle}" Background="{StaticResource BackgroundBrush}" Padding="24">
+                        <StackPanel>
+                            <TextBlock Text="팔레트" Margin="0,0,0,20" />
+                            <StackPanel Orientation="Horizontal">
+                                <Border Width="72" Height="48" Background="{StaticResource AccentBrush}" CornerRadius="12" Margin="0,0,16,0" />
+                                <Border Width="72" Height="48" Background="{StaticResource WarningBrush}" CornerRadius="12" Margin="0,0,16,0" />
+                                <Border Width="72" Height="48" Background="{StaticResource TextBrush}" CornerRadius="12" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                    <TextBlock Text="같은 글자색과 크기도 루트의 암시적 스타일에서 가져옵니다."
+                               TextWrapping="Wrap" Margin="0,32,0,0" />
+                </StackPanel>
+            </Border>
+            <Border Grid.Column="1" Style="{StaticResource CardStyle}" Margin="0,0,24,0">
+                <StackPanel>
+                    <TextBlock Text="02 / LIVE STATE" FontSize="22" />
+                    <TextBlock Text="상태에 반응하는 배지" Style="{StaticResource HeadingStyle}" />
+                    <TextBlock Text="3초마다 정상과 위험을 오갑니다." TextWrapping="Wrap" Margin="0,0,0,40" />
+                    <ContentControl x:Name="StatusBadge" Content="{Binding Status}" Style="{StaticResource StatusBadgeStyle}" />
+                    <TextBlock Text="위험 상태에서는 배경이 붉어지고 밝은 테두리가 나타납니다."
+                               TextWrapping="Wrap" Margin="0,40,0,0" />
+                </StackPanel>
+            </Border>
+            <Border Grid.Column="2" Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <TextBlock Text="03 / DEFAULT THEME" FontSize="22" />
+                    <TextBlock Text="기본 테마로 완성" Style="{StaticResource HeadingStyle}" />
+                    <TextBlock Text="UserControl은 패키지의 기본 템플릿을 사용합니다."
+                               TextWrapping="Wrap" Margin="0,0,0,32" />
+                    <UserControl x:Name="ThemeCard" Background="{StaticResource BackgroundBrush}"
+                                 BorderBrush="{StaticResource AccentBrush}" BorderThickness="2" Padding="28">
+                        <StackPanel>
+                            <TextBlock Text="나만의 콘텐츠" FontSize="30" Margin="0,0,0,16" />
+                            <TextBlock Text="배경, 테두리, 안쪽 여백이 콘텐츠를 감싸 줍니다." TextWrapping="Wrap" />
+                        </StackPanel>
+                    </UserControl>
+                </StackPanel>
+            </Border>
+        </Grid>
+        <TextBlock Grid.Row="2" Text="정상은 청록색 · 위험은 붉은색  /  3초마다 자동 전환" FontSize="24" />
+    </Grid>
+</Border>

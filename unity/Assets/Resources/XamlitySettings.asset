@@ -13,3 +13,4 @@ MonoBehaviour:
   m_Name: XamlitySettings
   m_EditorClassIdentifier: Xamlity.Unity::Xamlity.Unity.XamlitySettings
   defaultFont: {fileID: 11400000, guid: 87fc63d88f2658b46900b029d77cadd8, type: 2}
+  applicationResources: {fileID: -8879268494799667845, guid: c2f86be893889774db906cce1b734499, type: 3}
