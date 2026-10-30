@@ -35,7 +35,9 @@ namespace Xamlity.Styling
             assetResolver = resolver;
         }
 
-        internal FrameworkElement BuildContent(DependencyObject parent, Dictionary<string, DependencyObject> names) =>
-            content == null ? null : XamlBuilder.BuildTemplate(content, assetResolver, resourceScope, parent, names);
+        internal FrameworkElement BuildContent(DependencyObject parent, Dictionary<string, DependencyObject> names,
+            List<TemplateBinding> bindings) =>
+            content == null ? null : XamlBuilder.BuildTemplate(content, assetResolver, resourceScope, parent, names,
+                TargetType ?? typeof(Controls.Control), bindings);
     }
 }

@@ -51,6 +51,7 @@ namespace Xamlity.Markup
             private readonly List<string> referencedAssemblies;
             private readonly HashSet<string> invalidMappings = new HashSet<string>(StringComparer.Ordinal);
             private HashSet<string> templateNames;
+            private List<(XamlObjectNode Extension, DependencyProperty Target)> templateBindings;
 
             internal Parser(XmlReader reader, string fileName, List<XamlError> errors,
                 List<XamlAssetReference> assetReferences, List<string> referencedAssemblies)
@@ -115,8 +116,12 @@ namespace Xamlity.Markup
                         $"Name '{node.Name}' is already defined in this template."));
                 bool isTemplate = type == typeof(ControlTemplate);
                 HashSet<string> outerTemplateNames = templateNames;
+                var outerTemplateBindings = templateBindings;
                 if (isTemplate)
+                {
                     templateNames = new HashSet<string>(StringComparer.Ordinal);
+                    templateBindings = new List<(XamlObjectNode, DependencyProperty)>();
+                }
                 bool isDictionary = type != null && typeof(ResourceDictionary).IsAssignableFrom(type);
                 var resourceKeys = new HashSet<object>();
                 bool isStyle = type != null && typeof(Style).IsAssignableFrom(type);
@@ -137,6 +142,7 @@ namespace Xamlity.Markup
                         ValidateBindingPath(node, dataType);
                     ValidateStyleAndSetter(type, node, assigned, styleTargetType, styleOwnerType);
                     templateNames = outerTemplateNames;
+                    templateBindings = outerTemplateBindings;
                     return node;
                 }
 
@@ -212,7 +218,19 @@ namespace Xamlity.Markup
                 if (type == typeof(Binding))
                     ValidateBindingPath(node, dataType);
                 ValidateStyleAndSetter(type, node, assigned, styleTargetType, styleOwnerType);
+                if (isTemplate && !HasObjectProperty(node, nameof(ControlTemplate.TargetType)))
+                {
+                    Type templateTarget = GetStyleTargetType(node) ?? typeof(Controls.Control);
+                    foreach (var binding in templateBindings)
+                    {
+                        TemplateBindingExtension.ResolveProperty(templateTarget, binding.Extension.Properties[0].TextValue,
+                            binding.Target, out string error);
+                        if (error != null)
+                            errors.Add(new XamlError(fileName, binding.Extension.Line, binding.Extension.Column, error));
+                    }
+                }
                 templateNames = outerTemplateNames;
+                templateBindings = outerTemplateBindings;
                 return node;
             }
 
@@ -579,6 +597,11 @@ namespace Xamlity.Markup
                     int separator = name.IndexOf(':');
                     string xmlNamespace = reader.LookupNamespace(separator < 0 ? "" : name.Substring(0, separator));
                     string localName = separator < 0 ? name : name.Substring(separator + 1);
+                    if (xmlNamespace == XamlTypeResolver.DefaultNamespace && localName == "TemplateBinding")
+                    {
+                        ReadTemplateBindingExtension(type, dp, property, arguments);
+                        return;
+                    }
                     if (xmlNamespace == XamlTypeResolver.DefaultNamespace && localName == "StaticResource")
                     {
                         XamlObjectNode extension = ReadResourceExtension(arguments);
@@ -665,6 +688,40 @@ namespace Xamlity.Markup
                 }
                 extension.Properties.Add(key);
                 return extension;
+            }
+
+            private void ReadTemplateBindingExtension(Type type, DependencyProperty dp, XamlPropertyNode property,
+                List<(string Name, string Value, XamlMarkupExtensionParser.Extension Nested)> arguments)
+            {
+                if (templateBindings == null)
+                {
+                    Error(TemplateBindingExtension.ContextError);
+                    return;
+                }
+                if (!typeof(DependencyObject).IsAssignableFrom(type) || dp == null)
+                {
+                    Error(TemplateBindingExtension.TargetError);
+                    return;
+                }
+                if (arguments.Count != 1 || (arguments[0].Name != null && arguments[0].Name != "Property"))
+                {
+                    Error("Markup extension 'TemplateBinding' accepts only Property.");
+                    return;
+                }
+                if (arguments[0].Nested != null)
+                {
+                    Error($"Nested markup extension '{arguments[0].Nested.Name}' is not supported here.");
+                    return;
+                }
+                var extension = new XamlObjectNode
+                {
+                    TypeName = $"{typeof(TemplateBindingExtension).FullName}, {typeof(TemplateBindingExtension).Assembly.GetName().Name}",
+                    Line = location.LineNumber, Column = location.LinePosition
+                };
+                extension.Properties.Add(new XamlPropertyNode { PropertyName = "Property", TextValue = arguments[0].Value,
+                    Line = location.LineNumber, Column = location.LinePosition });
+                property.Objects.Add(extension);
+                templateBindings.Add((extension, dp));
             }
 
             private string ReadTypeExtension(

@@ -207,6 +207,21 @@ namespace Xamlity.Markup
                 }
                 else
                 {
+                    if (node.Objects.Count == 1 && GetType(node.Objects[0].TypeName) == typeof(TemplateBindingExtension))
+                    {
+                        if (scope.TemplatedParent == null)
+                            throw new InvalidOperationException(TemplateBindingExtension.ContextError);
+                        if (!(instance is DependencyObject target) || dp == null)
+                            throw new InvalidOperationException(TemplateBindingExtension.TargetError);
+                        DependencyProperty source = TemplateBindingExtension.ResolveProperty(scope.TemplateTargetType,
+                            node.Objects[0].Properties[0].TextValue, dp, out string error);
+                        if (error != null)
+                            throw new InvalidOperationException(error);
+                        var binding = new TemplateBinding(target, dp, source);
+                        binding.Update(scope.TemplatedParent.GetValue(source));
+                        scope.TemplateBindings.Add(binding);
+                        return;
+                    }
                     if (propertyType == typeof(ResourceDictionary) &&
                         !(node.Objects.Count == 1 && node.Objects[0].Key == null &&
                             (typeof(ResourceDictionary).IsAssignableFrom(GetType(node.Objects[0].TypeName)) ||
@@ -283,9 +298,11 @@ namespace Xamlity.Markup
         }
 
         internal static FrameworkElement BuildTemplate(XamlObjectNode node, IXamlAssetResolver assetResolver,
-            object[] resources, DependencyObject parent, Dictionary<string, DependencyObject> names)
+            object[] resources, DependencyObject parent, Dictionary<string, DependencyObject> names,
+            Type targetType, List<TemplateBinding> bindings)
         {
-            var scope = new BuildScope { TemplatedParent = parent, Names = names };
+            var scope = new BuildScope { TemplatedParent = parent, Names = names,
+                TemplateTargetType = targetType, TemplateBindings = bindings };
             scope.AddRange(resources);
             return (FrameworkElement)BuildObject(node, assetResolver, scope);
         }
@@ -302,6 +319,8 @@ namespace Xamlity.Markup
         {
             internal DependencyObject TemplatedParent;
             internal Dictionary<string, DependencyObject> Names;
+            internal Type TemplateTargetType;
+            internal List<TemplateBinding> TemplateBindings;
         }
 
         private static Type GetType(string name)

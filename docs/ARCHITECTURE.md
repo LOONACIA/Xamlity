@@ -60,6 +60,10 @@ Core 내부는 다음 영역으로 나눈다. 폴더 이름은 네임스페이�
 
 ControlTemplate의 자식은 내부용 `TemplateContent` 프로퍼티 노드의 Objects에 FrameworkElement 노드 하나로 저장한다(공개 CLR 프로퍼티가 아님). 빈 템플릿에는 이 노드가 없다. 내용도 일반 요소와 같은 파서 검증을 받으며, 이름 중복 검사는 각 템플릿 안에서만 수행한다. 중첩 템플릿은 별도의 이름 범위다. 기존 IR v3의 재귀 표현을 그대로 사용하므로 직렬화 버전은 바꾸지 않는다.
 
+`{TemplateBinding Prop}`와 `{TemplateBinding Property=Prop}`은 대상 프로퍼티의 `TextValue`를 null로 두고 `Objects`에 `Xamlity.Markup.TemplateBindingExtension` 객체 하나를 저장한다. 확장 객체의 `Property` 프로퍼티는 입력 DP 이름을 `TextValue`에 보존하며 모든 노드의 줄·열은 속성 위치다. 원본 DP는 가장 가까운 ControlTemplate.TargetType(생략하면 Control)에서 찾고, Owner.Prop은 Setter와 같은 기본 xmlns 소유 타입 규칙을 쓴다. 파서는 템플릿 내부의 DependencyObject DP 대상과 원본 타입의 할당 가능성을 검증한다. TargetType이 StaticResource이면 원본 검증은 템플릿 적용 시 수행한다. 기존 IR v3 표현을 사용하므로 버전은 바꾸지 않는다.
+
+컨트롤은 적용한 템플릿 인스턴스의 TemplateBinding 목록을 보관한다. 초기 원본 유효 값과 이후 유효 값 변경을 대상의 ParentTemplate 층에 저장하며 Expression은 만들지 않는다. ParentTemplateTrigger와 로컬 값은 이 값보다 우선한다. 유효 값 변경 알림이 없으면 갱신 작업도 없고, 템플릿을 떼면 목록을 해제하여 옛 트리를 더 이상 갱신하지 않는다.
+
 빌더는 ControlTemplate 내용을 즉시 생성하지 않고 IR 노드, 정의 위치에서 빌드 중이던 객체·사전의 참조, 에셋 해석기를 보관한다. ApplyTemplate마다 새 트리와 이름 범위를 만들고, StaticResource는 그때 빌드 중인 템플릿 요소 → 정의 위치의 렉시컬 범위 → 해당 빌드의 앱 → 테마 사전 순으로 찾는다. 조회 실패는 원래 IR 노드의 줄·열을 가진 XamlBuildException으로 적용 시점에 보고한다. 템플릿이 만든 요소의 TemplatedParent는 적용 대상 Control이며, XAML의 DP 값(Style 포함)은 ParentTemplate 층에 넣는다. 템플릿 안 Binding만 기존 로컬 식으로 유지하는 것은 이 구현의 의도적인 단순화다.
 
 Type 값 외의 값은 파서가 보존한 원문 문자열이며 런타임 빌더가 변환한다. 필드 추가·삭제·순서·인코딩 또는 값 해석의 호환성이 바뀌면 포맷 버전을 올리고 IR을 재임포트한다. 다른 매직·버전(v1·v2 포함)이나 잘린 데이터는 `InvalidDataException`으로 거부한다. XAML 임포터 버전은 5이며, 기존 v2 IR 에셋을 다시 임포트하여 런타임이 v3 형식으로 읽을 수 있게 한다.

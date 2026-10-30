@@ -37,6 +37,7 @@ namespace Xamlity.Controls
 
         private FrameworkElement templateRoot;
         private bool templateApplied;
+        private List<TemplateBinding> templateBindings;
 
         public ControlTemplate Template
         {
@@ -101,8 +102,10 @@ namespace Xamlity.Controls
                 throw new InvalidOperationException($"'{template.TargetType.Name}' ControlTemplate TargetType does not match templated type '{GetType().Name}'.");
             template.Seal();
             var names = new Dictionary<string, DependencyObject>(StringComparer.Ordinal);
-            FrameworkElement root = template.BuildContent(this, names);
+            var bindings = new List<TemplateBinding>();
+            FrameworkElement root = template.BuildContent(this, names, bindings);
             templateRoot = root;
+            templateBindings = bindings;
             TemplateNames = names;
             templateApplied = true;
             if (root == null)
@@ -116,6 +119,7 @@ namespace Xamlity.Controls
         {
             FrameworkElement previous = templateRoot;
             templateRoot = null;
+            templateBindings = null;
             TemplateNames = null;
             templateApplied = false;
             if (previous != null)
@@ -123,6 +127,17 @@ namespace Xamlity.Controls
         }
 
         protected override int VisualChildrenCount => templateRoot == null ? 0 : 1;
+
+        protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
+        {
+            base.OnPropertyChanged(e);
+            List<TemplateBinding> bindings = templateBindings;
+            if (bindings == null)
+                return;
+            for (int i = 0; i < bindings.Count && ReferenceEquals(bindings, templateBindings); i++)
+                if (bindings[i].SourceProperty == e.Property)
+                    bindings[i].Update(e.NewValue);
+        }
 
         protected override UIElement GetVisualChild(int index)
         {
