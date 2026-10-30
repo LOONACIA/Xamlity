@@ -38,6 +38,7 @@ namespace Xamlity.Controls
         private FrameworkElement templateRoot;
         private bool templateApplied;
         private List<TemplateBinding> templateBindings;
+        private TriggerInstance templateTriggers;
 
         public ControlTemplate Template
         {
@@ -108,6 +109,11 @@ namespace Xamlity.Controls
             templateBindings = bindings;
             TemplateNames = names;
             templateApplied = true;
+            if (template.Triggers.Count != 0)
+            {
+                templateTriggers = new TriggerInstance(this, template.Triggers, ValueLayer.TemplateTrigger, names);
+                templateTriggers.Start();
+            }
             if (root == null)
                 return false;
             AddVisualChild(root);
@@ -117,6 +123,9 @@ namespace Xamlity.Controls
 
         private void ClearTemplate()
         {
+            TriggerInstance previousTriggers = templateTriggers;
+            templateTriggers = null;
+            previousTriggers?.Detach();
             FrameworkElement previous = templateRoot;
             templateRoot = null;
             templateBindings = null;
@@ -145,6 +154,7 @@ namespace Xamlity.Controls
         protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
         {
             base.OnPropertyChanged(e);
+            templateTriggers?.OnPropertyChanged(e.Property);
             List<TemplateBinding> bindings = templateBindings;
             if (bindings == null)
                 return;

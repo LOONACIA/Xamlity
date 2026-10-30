@@ -51,6 +51,7 @@ namespace Xamlity.Markup
             private readonly List<string> referencedAssemblies;
             private readonly HashSet<string> invalidMappings = new HashSet<string>(StringComparer.Ordinal);
             private HashSet<string> templateNames;
+            private bool readingTrigger;
             private List<(XamlObjectNode Extension, DependencyProperty Target)> templateBindings;
 
             internal Parser(XmlReader reader, string fileName, List<XamlError> errors,
@@ -93,8 +94,13 @@ namespace Xamlity.Markup
                 }
 
                 var assigned = new HashSet<string>(StringComparer.Ordinal);
+                bool outerReadingTrigger = readingTrigger;
+                if (type == typeof(Trigger))
+                    readingTrigger = true;
+                else if (type == typeof(ControlTemplate) || (type != null && typeof(Style).IsAssignableFrom(type)))
+                    readingTrigger = false;
                 DependencyProperty setterProperty = null;
-                if (type == typeof(Setter))
+                if (type == typeof(Setter) && !readingTrigger)
                 {
                     while (reader.MoveToNextAttribute())
                         if ((reader.LocalName == nameof(Setter.Property) || reader.LocalName == "Setter.Property") &&
@@ -143,6 +149,7 @@ namespace Xamlity.Markup
                     ValidateStyleAndSetter(type, node, assigned, styleTargetType, styleOwnerType);
                     templateNames = outerTemplateNames;
                     templateBindings = outerTemplateBindings;
+                    readingTrigger = outerReadingTrigger;
                     return node;
                 }
 
@@ -218,6 +225,8 @@ namespace Xamlity.Markup
                 if (type == typeof(Binding))
                     ValidateBindingPath(node, dataType);
                 ValidateStyleAndSetter(type, node, assigned, styleTargetType, styleOwnerType);
+                if (isStyle || isTemplate)
+                    ValidateTriggers(node, isTemplate);
                 if (isTemplate && !HasObjectProperty(node, nameof(ControlTemplate.TargetType)))
                 {
                     Type templateTarget = GetStyleTargetType(node) ?? typeof(Controls.Control);
@@ -231,7 +240,97 @@ namespace Xamlity.Markup
                 }
                 templateNames = outerTemplateNames;
                 templateBindings = outerTemplateBindings;
+                readingTrigger = outerReadingTrigger;
                 return node;
+            }
+
+            private void ValidateTriggers(XamlObjectNode owner, bool template)
+            {
+                Type targetType = GetStyleTargetType(owner) ?? (template ? typeof(Controls.Control) : null);
+                bool deferred = HasObjectProperty(owner, nameof(Style.TargetType));
+                Dictionary<string, Type> names = template ? XamlTriggerSupport.GetTargetTypes(owner) : null;
+                foreach (XamlPropertyNode property in owner.Properties)
+                {
+                    if (property.PropertyName == nameof(Style.Setters) && !template)
+                        foreach (XamlObjectNode setter in property.Objects)
+                            ValidateTarget(setter);
+                    if (property.PropertyName != nameof(Style.Triggers))
+                        continue;
+                    foreach (XamlObjectNode trigger in property.Objects)
+                    {
+                        ValidateValue(trigger, targetType, deferred, true);
+                        foreach (XamlPropertyNode setters in trigger.Properties)
+                            if (setters.PropertyName == nameof(Trigger.Setters))
+                                foreach (XamlObjectNode setter in setters.Objects)
+                                {
+                                    Type setterType = ValidateTarget(setter);
+                                    bool deferredTarget = deferred &&
+                                        XamlTriggerSupport.FindProperty(setter, nameof(Setter.TargetName)) == null;
+                                    if (setterType != null || deferredTarget)
+                                        ValidateValue(setter, setterType, deferredTarget, false);
+                                }
+                    }
+                }
+
+                Type ValidateTarget(XamlObjectNode setter)
+                {
+                    XamlPropertyNode target = XamlTriggerSupport.FindProperty(setter, nameof(Setter.TargetName));
+                    if (target == null)
+                        return targetType;
+                    if (!template)
+                    {
+                        errors.Add(new XamlError(fileName, target.Line, target.Column,
+                            "'TargetName' property cannot be set on a Style Setter."));
+                        return null;
+                    }
+                    if (target.TextValue == null)
+                        return null;
+                    XamlValueConverter.TryConvert(target.TextValue, typeof(string), null, out object name, out _);
+                    try { return XamlTriggerSupport.ResolveTargetType(targetType, (string)name, names); }
+                    catch (InvalidOperationException exception)
+                    {
+                        errors.Add(new XamlError(fileName, target.Line, target.Column, exception.Message));
+                        return null;
+                    }
+                }
+
+                void ValidateValue(XamlObjectNode node, Type type, bool defer, bool trigger)
+                {
+                    XamlPropertyNode property = XamlTriggerSupport.FindProperty(node, "Property");
+                    XamlPropertyNode value = XamlTriggerSupport.FindProperty(node, "Value");
+                    if (property?.TextValue == null || (defer && !property.TextValue.Contains(".")))
+                        return;
+                    DependencyProperty dp = XamlTypeResolver.ResolveSetterProperty(type, property.TextValue,
+                        out string error, trigger);
+                    if (error != null)
+                    {
+                        errors.Add(new XamlError(fileName, property.Line, property.Column, error));
+                        return;
+                    }
+                    if (value?.TextValue != null)
+                    {
+                        if (dp.PropertyType == typeof(ImageSource))
+                        {
+                            XamlValueConverter.TryConvert(value.TextValue, typeof(string), null, out object path, out _);
+                            if (string.IsNullOrWhiteSpace((string)path))
+                                errors.Add(new XamlError(fileName, value.Line, value.Column,
+                                    "Property 'Value': Image asset paths must not be empty."));
+                            else
+                                assetReferences.Add(new XamlAssetReference((string)path, value.Line, value.Column));
+                        }
+                        else if (!XamlValueConverter.TryConvert(value.TextValue, dp.PropertyType, dp, out _, out error))
+                            errors.Add(new XamlError(fileName, value.Line, value.Column, $"Property 'Value': {error}"));
+                    }
+                    else if (value?.Objects.Count == 1)
+                    {
+                        string typeName = value.Objects[0].TypeName;
+                        Type valueType = typeName == null ? null : Type.GetType(typeName, false);
+                        if (valueType != null && valueType != typeof(StaticResourceExtension) &&
+                            !dp.PropertyType.IsAssignableFrom(valueType))
+                            errors.Add(new XamlError(fileName, value.Line, value.Column,
+                                $"Type '{valueType.Name}' is not assignable to property 'Value' of type '{dp.PropertyType.Name}'."));
+                    }
+                }
             }
 
             private static Type GetStyleTargetType(XamlObjectNode node)
@@ -270,12 +369,12 @@ namespace Xamlity.Markup
             private void ValidateStyleAndSetter(Type type, XamlObjectNode node, HashSet<string> assigned,
                 Type targetType, Type ownerType)
             {
-                if (type == typeof(Setter))
+                if (type == typeof(Setter) || type == typeof(Trigger))
                 {
                     if (!assigned.Contains(nameof(Setter.Property)))
-                        NodeError("Setter requires a Property.");
+                        NodeError($"{type.Name} requires a Property.");
                     if (!assigned.Contains(nameof(Setter.Value)))
-                        NodeError("Setter requires a Value.");
+                        NodeError($"{type.Name} requires a Value.");
                 }
                 else if (type != null && typeof(Style).IsAssignableFrom(type))
                 {
@@ -557,7 +656,7 @@ namespace Xamlity.Markup
                     }
                     var property = new XamlPropertyNode { PropertyName = name, OwnerTypeName = ownerTypeName,
                         Line = location.LineNumber, Column = location.LinePosition };
-                    if (type == typeof(Setter) && name == nameof(Setter.Property) && !IsMarkupExtension(reader.Value))
+                    if ((type == typeof(Setter) || type == typeof(Trigger)) && name == nameof(Setter.Property) && !IsMarkupExtension(reader.Value))
                         property.TextValue = reader.Value;
                     else if (type == typeof(Setter) && name == nameof(Setter.Value))
                     {

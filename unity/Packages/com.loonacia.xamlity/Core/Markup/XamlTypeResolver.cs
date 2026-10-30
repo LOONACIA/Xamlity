@@ -129,12 +129,13 @@ namespace Xamlity.Markup
             return DependencyProperty.FromName(type, name);
         }
 
-        internal static DependencyProperty ResolveSetterProperty(Type targetType, string name, out string error)
+        internal static DependencyProperty ResolveSetterProperty(Type targetType, string name, out string error,
+            bool trigger = false)
         {
             error = null;
             if (name.Contains(":"))
             {
-                error = "Setter.Property does not support prefixed owner types.";
+                error = $"{(trigger ? "Trigger" : "Setter")}.Property does not support prefixed owner types.";
                 return null;
             }
             int separator = name.IndexOf('.');
@@ -143,7 +144,7 @@ namespace Xamlity.Markup
             DependencyProperty property = owner == null ? null :
                 ResolveDependencyProperty(owner, separator < 0 ? name : name.Substring(separator + 1));
             if (property == null)
-                error = $"Cannot resolve the Style Property '{name}'. Verify that the owning type is the Style's TargetType, or use Class.Property syntax to specify the Property.";
+                error = $"Cannot resolve the {(trigger ? "Trigger" : "Style")} Property '{name}'. Verify that the owning type is the Style's TargetType, or use Class.Property syntax to specify the Property.";
             else if (property == FrameworkElement.StyleProperty)
                 error = "Style object is not allowed to affect the Style property of the object to which it applies.";
             return error == null ? property : null;

@@ -25,8 +25,13 @@ namespace Xamlity.Styling
         }
 
         public bool IsSealed { get; private set; }
+        public TriggerCollection Triggers { get; } = new TriggerCollection();
 
-        public void Seal() => IsSealed = true;
+        public void Seal()
+        {
+            Triggers.Seal();
+            IsSealed = true;
+        }
 
         internal void SetContent(XamlObjectNode node, object[] scope, IXamlAssetResolver resolver)
         {

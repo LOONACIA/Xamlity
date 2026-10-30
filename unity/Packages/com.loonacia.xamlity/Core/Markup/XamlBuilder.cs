@@ -58,7 +58,7 @@ namespace Xamlity.Markup
                     throw new XamlBuildException(node.Line, node.Column, $"Resource '{key}' was not found.");
                 }
                 if (type == typeof(Setter))
-                    return BuildSetter(node, style, assetResolver, scope);
+                    return BuildSetter(node, style?.TargetType, assetResolver, scope);
                 object instance = Activator.CreateInstance(type);
                 scope.Add(instance);
                 try
@@ -67,13 +67,25 @@ namespace Xamlity.Markup
                         element.TemplatedParent = scope.TemplatedParent;
                     if (node.Name != null)
                         SetPropertyValue((DependencyObject)instance, FrameworkElement.NameProperty, node.Name, scope);
-                    if (instance is Style)
+                    if (instance is Style || instance is ControlTemplate)
                         foreach (XamlPropertyNode property in node.Properties)
                             if (property.PropertyName == nameof(Style.TargetType))
                                 ApplyProperty(instance, type, property, assetResolver, scope);
                     foreach (XamlPropertyNode property in node.Properties)
-                        if (!(instance is Style) || property.PropertyName != nameof(Style.TargetType))
+                        if ((!(instance is Style) && !(instance is ControlTemplate)) ||
+                            (property.PropertyName != nameof(Style.TargetType) && property.PropertyName != nameof(Style.Triggers)))
                             ApplyProperty(instance, type, property, assetResolver, scope);
+                    if (instance is Style || instance is ControlTemplate)
+                    {
+                        Type target = instance is Style ownerStyle ? ownerStyle.TargetType :
+                            ((ControlTemplate)instance).TargetType ?? typeof(Control);
+                        TriggerCollection triggers = instance is Style styled ? styled.Triggers : ((ControlTemplate)instance).Triggers;
+                        Dictionary<string, Type> names = instance is ControlTemplate ? XamlTriggerSupport.GetTargetTypes(node) : null;
+                        foreach (XamlPropertyNode property in node.Properties)
+                            if (property.PropertyName == nameof(Style.Triggers))
+                                foreach (XamlObjectNode child in property.Objects)
+                                    triggers.Add(BuildTrigger(child, target, names, assetResolver, scope));
+                    }
                     if (instance is ContentPresenter presenter && scope.TemplatedParent is ContentControl parent &&
                         !node.Properties.Exists(property => property.PropertyName == nameof(ContentPresenter.Content)))
                     {
@@ -101,27 +113,75 @@ namespace Xamlity.Markup
             }
         }
 
-        private static Setter BuildSetter(XamlObjectNode node, Style style, IXamlAssetResolver assetResolver, BuildScope scope)
+        private static Trigger BuildTrigger(XamlObjectNode node, Type targetType, Dictionary<string, Type> names,
+            IXamlAssetResolver assetResolver, BuildScope scope)
+        {
+            XamlPropertyNode location = null;
+            try
+            {
+                XamlPropertyNode property = XamlTriggerSupport.FindProperty(node, nameof(Trigger.Property));
+                XamlPropertyNode value = XamlTriggerSupport.FindProperty(node, nameof(Trigger.Value));
+                if (property == null)
+                    throw new InvalidOperationException("Trigger requires a Property.");
+                location = property;
+                DependencyProperty dp;
+                if (property.TextValue != null)
+                {
+                    dp = XamlTypeResolver.ResolveSetterProperty(targetType, property.TextValue, out string error, true);
+                    if (error != null)
+                        throw new InvalidOperationException(error);
+                }
+                else
+                    dp = (DependencyProperty)BuildObject(property.Objects[0], assetResolver, scope);
+                if (value == null)
+                    throw new InvalidOperationException("Trigger requires a Value.");
+                location = value;
+                var trigger = new Trigger { Property = dp, Value = value.TextValue != null
+                    ? ConvertText(value.TextValue, dp.PropertyType, dp, assetResolver)
+                    : BuildObject(value.Objects[0], assetResolver, scope) };
+                foreach (XamlPropertyNode setters in node.Properties)
+                    if (setters.PropertyName == nameof(Trigger.Setters))
+                        foreach (XamlObjectNode setter in setters.Objects)
+                            trigger.Setters.Add(BuildSetter(setter, targetType, assetResolver, scope, names));
+                trigger.Seal();
+                return trigger;
+            }
+            catch (XamlBuildException) { throw; }
+            catch (Exception exception)
+            {
+                throw new XamlBuildException(location?.Line ?? node.Line, location?.Column ?? node.Column,
+                    $"Cannot build Trigger: {exception.Message}", exception);
+            }
+        }
+
+        private static Setter BuildSetter(XamlObjectNode node, Type targetType, IXamlAssetResolver assetResolver,
+            BuildScope scope, Dictionary<string, Type> names = null)
         {
             try
             {
                 XamlPropertyNode propertyNode = null;
                 XamlPropertyNode valueNode = null;
+                string targetName = null;
                 foreach (XamlPropertyNode property in node.Properties)
                 {
                     if (property.PropertyName == nameof(Setter.Property))
                         propertyNode = property;
                     else if (property.PropertyName == nameof(Setter.Value))
                         valueNode = property;
+                    else if (property.PropertyName == nameof(Setter.TargetName))
+                        targetName = property.TextValue != null
+                            ? (string)ConvertText(property.TextValue, typeof(string), null, assetResolver)
+                            : (string)BuildObject(property.Objects[0], assetResolver, scope);
                     else
                         throw new InvalidOperationException($"Unknown or read-only property '{property.PropertyName}'.");
                 }
                 if (propertyNode == null)
                     throw new InvalidOperationException("Setter requires a Property.");
+                targetType = XamlTriggerSupport.ResolveTargetType(targetType, targetName, names);
                 DependencyProperty dp;
                 if (propertyNode.TextValue != null)
                 {
-                    dp = XamlTypeResolver.ResolveSetterProperty(style?.TargetType, propertyNode.TextValue, out string error);
+                    dp = XamlTypeResolver.ResolveSetterProperty(targetType, propertyNode.TextValue, out string error);
                     if (error != null)
                         throw new InvalidOperationException(error);
                 }
@@ -142,7 +202,7 @@ namespace Xamlity.Markup
                         throw new InvalidOperationException("Property 'Value' requires exactly one object.");
                     value = BuildObject(valueNode.Objects[0], assetResolver, scope);
                 }
-                var setter = new Setter(dp, value);
+                var setter = new Setter(dp, value, targetName);
                 setter.Seal();
                 return setter;
             }

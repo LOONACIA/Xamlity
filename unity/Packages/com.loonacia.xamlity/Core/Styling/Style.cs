@@ -42,6 +42,8 @@ namespace Xamlity.Styling
         }
 
         public SetterBaseCollection Setters { get; } = new SetterBaseCollection();
+        public TriggerCollection Triggers { get; } = new TriggerCollection();
+        internal List<Trigger> AllTriggers { get; private set; }
         public bool IsSealed { get; private set; }
         internal Dictionary<DependencyProperty, object> SetterValues { get; private set; }
 
@@ -63,7 +65,16 @@ namespace Xamlity.Styling
                     if (!basedOn.TargetType.IsAssignableFrom(targetType))
                         throw new InvalidOperationException($"Can only base on a Style with target type that is base type '{targetType.Name}'.");
                 }
+                foreach (Setter setter in Setters)
+                    setter.ValidateStyleTarget();
+                foreach (Trigger trigger in Triggers)
+                    foreach (Setter setter in trigger.Setters)
+                        setter.ValidateStyleTarget();
                 Setters.Seal();
+                Triggers.Seal();
+                AllTriggers = basedOn == null ? new List<Trigger>() : new List<Trigger>(basedOn.AllTriggers);
+                foreach (Trigger trigger in Triggers)
+                    AllTriggers.Add(trigger);
                 SetterValues = basedOn == null
                     ? new Dictionary<DependencyProperty, object>()
                     : new Dictionary<DependencyProperty, object>(basedOn.SetterValues);

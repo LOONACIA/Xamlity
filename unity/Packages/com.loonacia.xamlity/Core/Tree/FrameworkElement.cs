@@ -23,6 +23,8 @@ namespace Xamlity.Tree
         private Style appliedStyle;
         private Style implicitStyle;
         private Style themeStyle;
+        private TriggerInstance styleTriggers;
+        private TriggerInstance themeTriggers;
         private ResourceDictionary resources;
 
         public DependencyObject TemplatedParent { get; internal set; }
@@ -121,6 +123,18 @@ namespace Xamlity.Tree
             bool targetMatches = style == null || style.TargetType.IsAssignableFrom(GetType());
             Style previous = appliedStyle;
             appliedStyle = targetMatches ? style : null;
+            if (layer == ValueLayer.Style)
+            {
+                TriggerInstance previousTriggers = styleTriggers;
+                styleTriggers = null;
+                previousTriggers?.Detach();
+            }
+            else
+            {
+                TriggerInstance previousTriggers = themeTriggers;
+                themeTriggers = null;
+                previousTriggers?.Detach();
+            }
             if (appliedStyle != null)
             {
                 foreach (var setter in appliedStyle.SetterValues)
@@ -136,6 +150,16 @@ namespace Xamlity.Tree
             }
             if (!targetMatches)
                 throw new InvalidOperationException($"'{style.TargetType.Name}' TargetType does not match type of element '{GetType().Name}'.");
+            if (appliedStyle != null && appliedStyle.AllTriggers.Count != 0)
+            {
+                var triggers = new TriggerInstance(this, appliedStyle.AllTriggers,
+                    layer == ValueLayer.Style ? ValueLayer.StyleTrigger : ValueLayer.DefaultStyleTrigger);
+                if (layer == ValueLayer.Style)
+                    styleTriggers = triggers;
+                else
+                    themeTriggers = triggers;
+                triggers.Start();
+            }
         }
 
         public static readonly DependencyProperty DataContextProperty = DependencyProperty.Register(
@@ -159,6 +183,8 @@ namespace Xamlity.Tree
         protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
         {
             base.OnPropertyChanged(e);
+            styleTriggers?.OnPropertyChanged(e.Property);
+            themeTriggers?.OnPropertyChanged(e.Property);
             if (e.Property == DataContextProperty)
                 DataContextChanged?.Invoke(this, e);
         }

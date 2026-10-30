@@ -9,6 +9,7 @@ namespace Xamlity.Styling
     {
         private DependencyProperty property;
         private object value;
+        private string targetName;
 
         public Setter() { }
 
@@ -16,6 +17,23 @@ namespace Xamlity.Styling
         {
             this.property = property;
             this.value = value;
+        }
+
+        public Setter(DependencyProperty property, object value, string targetName) : this(property, value)
+        {
+            this.targetName = targetName;
+        }
+
+        public string TargetName
+        {
+            get => targetName;
+            set { CheckSealed(); targetName = value; }
+        }
+
+        internal void ValidateStyleTarget()
+        {
+            if (targetName != null)
+                throw new InvalidOperationException("'TargetName' property cannot be set on a Style Setter.");
         }
 
         public DependencyProperty Property
