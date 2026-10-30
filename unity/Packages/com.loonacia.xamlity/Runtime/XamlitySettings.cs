@@ -6,11 +6,13 @@ namespace Xamlity.Unity
     public sealed class XamlitySettings : ScriptableObject
     {
         [SerializeField] private TMP_FontAsset defaultFont;
+        [SerializeField] private XamlAsset applicationResources;
 
         private static XamlitySettings instance;
         private static bool loaded;
 
         public TMP_FontAsset DefaultFont => defaultFont;
+        public XamlAsset ApplicationResources => applicationResources;
 
         internal static XamlitySettings Load()
         {

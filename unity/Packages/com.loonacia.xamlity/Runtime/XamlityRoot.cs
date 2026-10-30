@@ -4,6 +4,7 @@ using UnityEngine;
 using UnityEngine.Rendering;
 using Xamlity.Layout;
 using Xamlity.Rendering;
+using Xamlity.Styling;
 using Xamlity.Tree;
 
 namespace Xamlity.Unity
@@ -14,6 +15,7 @@ namespace Xamlity.Unity
         [SerializeField] private Vector2Int referenceResolution = new Vector2Int(1920, 1080);
 
         private static readonly List<XamlityRoot> activeRoots = new List<XamlityRoot>();
+        private static bool themeWarningLogged;
         private readonly MeshDrawingContext drawingContext = new MeshDrawingContext();
         private int viewportWidth;
         private int viewportHeight;
@@ -45,7 +47,8 @@ namespace Xamlity.Unity
         private void Awake()
         {
             var settings = XamlitySettings.Load();
-            Build(xaml, settings != null ? settings.DefaultFont : null);
+            Build(xaml, settings != null ? settings.DefaultFont : null,
+                settings != null ? settings.ApplicationResources : null);
         }
         private void OnEnable() => Register();
         private void OnDisable() => Unregister();
@@ -61,11 +64,22 @@ namespace Xamlity.Unity
             CoreUtils.Destroy(Mesh);
         }
 
-        internal void Build(XamlAsset asset, TMP_FontAsset defaultFont = null)
+        internal void Build(XamlAsset asset, TMP_FontAsset defaultFont = null, XamlAsset applicationResources = null)
         {
             if (asset == null)
                 return;
-            var tree = new UIRoot(asset.Build(), new TmpTextMeasurer(), new FontHandle(defaultFont));
+            ResourceDictionary theme = null;
+            var themeAsset = Resources.Load<XamlAsset>("Xamlity/Generic");
+            if (themeAsset != null && themeAsset.HasIr)
+                theme = themeAsset.BuildResourceDictionary(null);
+            else if (!themeWarningLogged)
+            {
+                Debug.LogWarning("Xamlity default theme is missing or has import errors.");
+                themeWarningLogged = true;
+            }
+            var application = applicationResources != null ? applicationResources.BuildResourceDictionary(theme) : null;
+            var tree = new UIRoot(asset.Build(application, theme), new TmpTextMeasurer(), new FontHandle(defaultFont),
+                application, theme);
             if (Tree?.RootElement is FrameworkElement oldElement)
                 oldElement.DataContext = null;
             Tree = tree;

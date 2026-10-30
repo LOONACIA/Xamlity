@@ -2,6 +2,7 @@ using System;
 using UnityEngine;
 using Xamlity.Markup;
 using Xamlity.Rendering;
+using Xamlity.Styling;
 using Xamlity.Tree;
 using Object = UnityEngine.Object;
 
@@ -22,11 +23,26 @@ namespace Xamlity.Unity
 
         internal bool HasIr => ir != null && ir.Length != 0;
 
-        public UIElement Build()
+        public UIElement Build() => Build(null, null);
+
+        internal UIElement Build(ResourceDictionary applicationResources, ResourceDictionary themeResources)
+        {
+            return BuildObject(applicationResources, themeResources) as UIElement
+                ?? throw new InvalidOperationException($"XAML asset '{name}' must have a UIElement root.");
+        }
+
+        internal ResourceDictionary BuildResourceDictionary(ResourceDictionary themeResources)
+        {
+            return BuildObject(null, themeResources) as ResourceDictionary
+                ?? throw new InvalidOperationException($"XAML asset '{name}' must have a ResourceDictionary root.");
+        }
+
+        private object BuildObject(ResourceDictionary applicationResources, ResourceDictionary themeResources)
         {
             if (!HasIr)
                 throw new InvalidOperationException($"XAML asset '{name}' has import errors.");
-            return (UIElement)XamlBuilder.Build(XamlIrSerializer.Deserialize(ir), new AssetResolver(this));
+            return XamlBuilder.Build(XamlIrSerializer.Deserialize(ir), new AssetResolver(this),
+                applicationResources, themeResources);
         }
 
         private sealed class AssetResolver : IXamlAssetResolver

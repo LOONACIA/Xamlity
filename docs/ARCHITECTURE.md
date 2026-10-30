@@ -99,8 +99,13 @@ Type 값 외의 값은 파서가 보존한 원문 문자열이며 런타임 빌�
 
 [런타임: 생성]
 XamlityRoot.Awake
-  → XamlAsset → 참조 테이블의 UnityImageSource 해석기를 주입한 Core 빌더 → 요소 트리
+  → XamlitySettings에서 defaultFont·applicationResources 읽기
+  → Resources.Load<XamlAsset>("Xamlity/Generic") → 테마 ResourceDictionary 빌드
+     (없거나 임포트 오류면 경고 한 번 후 테마 없이 진행)
+  → applicationResources(App.xaml) → 테마를 대체 조회하는 앱 ResourceDictionary 빌드
+  → 뷰 XamlAsset → 앱·테마 사전과 참조 테이블의 UnityImageSource 해석기를 주입한 Core 빌더 → 요소 트리
      (x:Class면 그 타입을 생성하고 InitializeComponent 호출)
+  → UIRoot에 앱·테마 사전과 기본 폰트 전달 (사전은 Build마다 새로 생성하며 캐시하지 않음)
   → 암시적 Style(요소 → 시각 부모 → 앱), 테마 스타일(DefaultStyleKey로 테마 사전), StaticResource(빌드 시 렉시컬 → 앱 → 테마)
   → 코드에서 DataContext 설정 → 바인딩 연결
 
@@ -121,7 +126,7 @@ Input System → 추상 입력 이벤트 → 히트 테스트 → RoutedEvent �
 - **x:DataType 검증**: 요소와 자손의 Binding 경로를 선언 타입의 public 인스턴스 프로퍼티로 검증하며 자손의 선언이 범위를 덮어쓴다. DataContext 프로퍼티의 바인딩은 부모 범위의 타입으로 검증하고, 범위에 선언이 없으면 검증하지 않는다. x:DataType은 IR에 저장하지 않으며 런타임 리플렉션 바인딩은 그대로 유지한다.
 - **에러 처리**: XAML 오류는 가능한 한 임포트 시점에 `파일(줄,열): 메시지`로 낸다. 런타임에서 `x:DataType`이 없는 바인딩의 경로를 찾지 못하면 예외 대신 경고 로그를 남긴다(WPF 방식).
 - **로깅**: Core는 `XamlityLog.Logger`로 `IXamlityLogger`를 주입받으며, null이면 로그를 버린다. `UnityXamlityLogger.Install()`은 경고를 `Debug.LogWarning`으로 연결하며, Runtime의 `[RuntimeInitializeOnLoadMethod(SubsystemRegistration)]`와 Editor의 `[InitializeOnLoadMethod]`에서 호출한다.
-- **설정**: Project Settings > Xamlity(`XamlitySettings` 에셋)에서 앱 리소스(App.xaml)와 기본 폰트(TMP 폰트 에셋)를 지정한다. 루트마다 다른 값(XAML 에셋, sortingOrder, 기준 해상도)은 `XamlityRoot` 컴포넌트에 둔다.
+- **설정**: `Resources/XamlitySettings`의 `XamlitySettings` 에셋 Inspector에서 `applicationResources`(ResourceDictionary 루트의 App.xaml 에셋)와 `defaultFont`(TMP 폰트 에셋)를 지정한다. Project Settings > Xamlity UI는 별도 계획에서 구현한다. 루트마다 다른 값(XAML 에셋, sortingOrder, 기준 해상도)은 `XamlityRoot` 컴포넌트에 둔다.
 - **좌표와 해상도**: XAML 단위는 논리 픽셀이다. `XamlityRoot`의 기준 해상도는 기본 1920×1080이며, 배율은 `s = min(화면 픽셀 너비 / 기준 너비, 화면 픽셀 높이 / 기준 높이)`이다. 기준 해상도의 성분이 0 이하면 배율은 1이다. Core 레이아웃과 글자 측정은 논리 단위를 유지하고, 논리 viewport는 `(화면 픽셀 너비 / s, 화면 픽셀 높이 / s)`이다. 어댑터는 클립된 사각형과 글리프 좌표에 배율을 적용한 뒤 back buffer용 y-flip을 처리한다.
 - **성능**: 레이아웃과 렌더링은 무효화 플래그로 동작한다. 변화가 없는 프레임은 Measure/Arrange와 메시 재생성을 건너뛰고 GC 할당 0을 목표로 한다.
 - **스레드**: 요소 트리, 바인딩, 렌더링은 메인 스레드 전용이다.
