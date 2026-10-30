@@ -123,7 +123,21 @@ namespace Xamlity.Controls
             TemplateNames = null;
             templateApplied = false;
             if (previous != null)
+            {
+                DetachTemplateContent(previous);
                 RemoveVisualChild(previous);
+            }
+        }
+
+        private void DetachTemplateContent(UIElement element)
+        {
+            if (element is ContentPresenter presenter && ReferenceEquals(presenter.TemplatedParent, this))
+            {
+                presenter.DetachContent();
+                return;
+            }
+            for (int i = 0; i < element.InheritanceChildrenCount; i++)
+                DetachTemplateContent((UIElement)element.GetInheritanceChild(i));
         }
 
         protected override int VisualChildrenCount => templateRoot == null ? 0 : 1;

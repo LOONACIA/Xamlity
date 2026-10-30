@@ -15,7 +15,7 @@ Xamlity/
 │           ├── Core/                       # Xamlity.Core.asmdef (noEngineReferences: true)
 │           ├── Runtime/                    # Xamlity.Unity.asmdef — Unity 어댑터
 │           ├── Editor/                     # Xamlity.Editor.asmdef — 임포터, 코드 생성, 설정 UI
-│           ├── Themes/                     # 기본 다크 테마 XAML
+│           ├── Themes/                     # Resources/Xamlity/Generic.xaml — Resources.Load<XamlAsset>("Xamlity/Generic")으로 로드
 │           └── Tests/
 │               └── Editor/                 # Unity Test Framework (EditMode)
 ├── dotnet/
@@ -26,6 +26,8 @@ Xamlity/
 ```
 
 Core 내부는 다음 영역으로 나눈다. 폴더 이름은 네임스페이스(`Xamlity.<영역>`)와 같다.
+
+기본 테마는 패키지 안 Resources 폴더에 있어 별도 설정 없이 플레이어 빌드에도 포함된다.
 
 | 영역 | 내용 |
 |---|---|

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using Xamlity.Controls;
 using Xamlity.Data;
 using Xamlity.Properties;
 using Xamlity.Rendering;
@@ -73,6 +74,13 @@ namespace Xamlity.Markup
                     foreach (XamlPropertyNode property in node.Properties)
                         if (!(instance is Style) || property.PropertyName != nameof(Style.TargetType))
                             ApplyProperty(instance, type, property, assetResolver, scope);
+                    if (instance is ContentPresenter presenter && scope.TemplatedParent is ContentControl parent &&
+                        !node.Properties.Exists(property => property.PropertyName == nameof(ContentPresenter.Content)))
+                    {
+                        var binding = new TemplateBinding(presenter, ContentPresenter.ContentProperty, ContentControl.ContentProperty);
+                        binding.Update(parent.Content);
+                        scope.TemplateBindings.Add(binding);
+                    }
                 }
                 finally
                 {
