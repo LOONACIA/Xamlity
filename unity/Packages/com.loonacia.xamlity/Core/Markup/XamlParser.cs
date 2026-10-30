@@ -50,6 +50,7 @@ namespace Xamlity.Markup
             private readonly List<XamlAssetReference> assetReferences;
             private readonly List<string> referencedAssemblies;
             private readonly HashSet<string> invalidMappings = new HashSet<string>(StringComparer.Ordinal);
+            private HashSet<string> templateNames;
 
             internal Parser(XmlReader reader, string fileName, List<XamlError> errors,
                 List<XamlAssetReference> assetReferences, List<string> referencedAssemblies)
@@ -109,6 +110,13 @@ namespace Xamlity.Markup
                     reader.MoveToElement();
                 }
                 ReadAttributes(type, node, assigned, dataType, parentDataType, setterProperty, resourceEntry);
+                if (node.Name != null && templateNames != null && !templateNames.Add(node.Name))
+                    errors.Add(new XamlError(fileName, node.Line, node.Column,
+                        $"Name '{node.Name}' is already defined in this template."));
+                bool isTemplate = type == typeof(ControlTemplate);
+                HashSet<string> outerTemplateNames = templateNames;
+                if (isTemplate)
+                    templateNames = new HashSet<string>(StringComparer.Ordinal);
                 bool isDictionary = type != null && typeof(ResourceDictionary).IsAssignableFrom(type);
                 var resourceKeys = new HashSet<object>();
                 bool isStyle = type != null && typeof(Style).IsAssignableFrom(type);
@@ -128,6 +136,7 @@ namespace Xamlity.Markup
                     if (type == typeof(Binding))
                         ValidateBindingPath(node, dataType);
                     ValidateStyleAndSetter(type, node, assigned, styleTargetType, styleOwnerType);
+                    templateNames = outerTemplateNames;
                     return node;
                 }
 
@@ -148,6 +157,20 @@ namespace Xamlity.Markup
                             var entries = new XamlPropertyNode { PropertyName = "Entries", Line = entry.Line, Column = entry.Column };
                             entries.Objects.Add(entry);
                             node.Properties.Add(entries);
+                            continue;
+                        }
+                        if (isTemplate)
+                        {
+                            if (content == null)
+                            {
+                                content = new XamlPropertyNode { PropertyName = "TemplateContent",
+                                    Line = location.LineNumber, Column = location.LinePosition };
+                                node.Properties.Add(content);
+                            }
+                            else
+                                Error("ControlTemplate can have only one root element.");
+                            content.Objects.Add(ReadObject(targetType: typeof(FrameworkElement),
+                                propertyName: "TemplateContent", parentDataType: dataType));
                             continue;
                         }
                         if (type != null && XamlTypeResolver.Resolve(reader.NamespaceURI, reader.LocalName) != typeof(Binding))
@@ -189,6 +212,7 @@ namespace Xamlity.Markup
                 if (type == typeof(Binding))
                     ValidateBindingPath(node, dataType);
                 ValidateStyleAndSetter(type, node, assigned, styleTargetType, styleOwnerType);
+                templateNames = outerTemplateNames;
                 return node;
             }
 

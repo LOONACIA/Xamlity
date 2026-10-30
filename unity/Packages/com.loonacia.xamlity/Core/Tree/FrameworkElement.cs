@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using Xamlity.Controls;
 using Xamlity.Data;
 using Xamlity.Layout;
 using Xamlity.Properties;
@@ -22,6 +24,16 @@ namespace Xamlity.Tree
         private Style implicitStyle;
         private Style themeStyle;
         private ResourceDictionary resources;
+
+        public DependencyObject TemplatedParent { get; internal set; }
+        internal Dictionary<string, DependencyObject> TemplateNames { get; set; }
+
+        public bool ApplyTemplate() => this is Control control && control.ApplyControlTemplate();
+
+        public virtual void OnApplyTemplate() { }
+
+        protected internal DependencyObject GetTemplateChild(string childName) =>
+            TemplateNames != null && TemplateNames.TryGetValue(childName, out DependencyObject child) ? child : null;
 
         public ResourceDictionary Resources
         {
@@ -66,6 +78,8 @@ namespace Xamlity.Tree
                     value = element.resources[resourceKey];
                     return true;
                 }
+                if (!includeTheme && !(this is Control) && ReferenceEquals(current, TemplatedParent))
+                    break;
             }
             UIRoot root = GetRoot();
             if (root?.ApplicationResources != null && root.ApplicationResources.Contains(resourceKey))

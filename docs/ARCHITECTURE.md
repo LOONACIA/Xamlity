@@ -58,6 +58,10 @@ Core 내부는 다음 영역으로 나눈다. 폴더 이름은 네임스페이�
 
 `System.Type` 프로퍼티의 속성 값은 XAML 타입 이름 또는 `{x:Type ...}`으로 받는다. 접두사 매핑은 IR에 남지 않으므로 파서가 요소 이름과 같은 규칙(생성자 불필요)으로 해석하여 `TextValue`에 `"<CLR 전체 이름>, <어셈블리 이름>"`으로 정규화한다. 빌더는 `Type.GetType`으로 복원한다. Style의 content property는 Setters다. Setter.Property는 입력 이름을 그대로 저장하고, 파서와 빌더가 공통 해석 함수로 둘러싼 Style.TargetType 또는 기본 xmlns의 명시적 Owner에서 DP를 찾는다. Setter.Value의 텍스트 변환과 객체 할당 검증에는 해당 DP의 타입을 사용한다.
 
+ControlTemplate의 자식은 내부용 `TemplateContent` 프로퍼티 노드의 Objects에 FrameworkElement 노드 하나로 저장한다(공개 CLR 프로퍼티가 아님). 빈 템플릿에는 이 노드가 없다. 내용도 일반 요소와 같은 파서 검증을 받으며, 이름 중복 검사는 각 템플릿 안에서만 수행한다. 중첩 템플릿은 별도의 이름 범위다. 기존 IR v3의 재귀 표현을 그대로 사용하므로 직렬화 버전은 바꾸지 않는다.
+
+빌더는 ControlTemplate 내용을 즉시 생성하지 않고 IR 노드, 정의 위치에서 빌드 중이던 객체·사전의 참조, 에셋 해석기를 보관한다. ApplyTemplate마다 새 트리와 이름 범위를 만들고, StaticResource는 그때 빌드 중인 템플릿 요소 → 정의 위치의 렉시컬 범위 → 해당 빌드의 앱 → 테마 사전 순으로 찾는다. 조회 실패는 원래 IR 노드의 줄·열을 가진 XamlBuildException으로 적용 시점에 보고한다. 템플릿이 만든 요소의 TemplatedParent는 적용 대상 Control이며, XAML의 DP 값(Style 포함)은 ParentTemplate 층에 넣는다. 템플릿 안 Binding만 기존 로컬 식으로 유지하는 것은 이 구현의 의도적인 단순화다.
+
 Type 값 외의 값은 파서가 보존한 원문 문자열이며 런타임 빌더가 변환한다. 필드 추가·삭제·순서·인코딩 또는 값 해석의 호환성이 바뀌면 포맷 버전을 올리고 IR을 재임포트한다. 다른 매직·버전(v1·v2 포함)이나 잘린 데이터는 `InvalidDataException`으로 거부한다. XAML 임포터 버전은 5이며, 기존 v2 IR 에셋을 다시 임포트하여 런타임이 v3 형식으로 읽을 수 있게 한다.
 
 ## 레이어 규칙
@@ -68,6 +72,7 @@ Type 값 외의 값은 파서가 보존한 원문 문자열이며 런타임 빌�
 - 렌더링은 URP `ScriptableRendererFeature` 하나로만 화면에 나간다. Core의 그리기 명령을 메시로 바꾸는 일은 `Xamlity.Unity` 안에서만 한다.
 - 루트당 Mesh 하나를 재사용하며, 그리기 순서를 유지하고 연속한 같은 머티리얼·텍스처 명령을 submesh 배치로 묶는다. 단색은 `Xamlity/Solid`, 텍스트는 `Xamlity/Text` SDF 셰이더, 이미지는 `Xamlity/Image` 셰이더를 사용한다. 피처가 공유 머티리얼을 소유하고 배치별 텍스처는 `MaterialPropertyBlock`으로 전달한다. 글리프 UV는 레이아웃 뒤의 실제 아틀라스 크기로 계산한다.
 - 컨트롤은 lookless다. 컨트롤 클래스는 상태와 동작만 갖고, 모양은 `Themes/`의 ControlTemplate으로 정의한다. 직접 그리는 것은 프리미티브(Border, TextBlock, Image)뿐이다.
+- Control의 시각 자식은 템플릿 루트 하나다. Template의 유효 값이 바뀌면 기존 트리를 분리하고 다음 ApplyTemplate 또는 measure에서 새 트리를 만든다. 루트 연결 뒤 OnApplyTemplate을 호출하며 GetTemplateChild는 현재 템플릿 이름 범위를 조회한다. Foreground·FontSize는 TextBlock의 DP에 AddOwner로 등록하여 템플릿 자식에 상속한다. Control이 아닌 템플릿 자식의 암시적 스타일 조회는 TemplatedParent의 Resources까지 살핀 뒤 앱 사전으로 넘어간다. Control인 템플릿 자식은 일반 요소처럼 시각 조상을 끝까지 조회한다.
 - 에디터 전용 기능(임포트, 검증, 코드 생성, 재임포트 의존성, 설정 UI)은 `Xamlity.Editor`에만 둔다.
 
 ## 데이터 흐름

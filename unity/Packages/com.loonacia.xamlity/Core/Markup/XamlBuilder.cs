@@ -27,7 +27,7 @@ namespace Xamlity.Markup
             if (document == null)
                 throw new ArgumentNullException(nameof(document));
             // The scope is searched in reverse: lexical resources, application, then theme.
-            var scope = new List<object>();
+            var scope = new BuildScope();
             if (themeResources != null)
                 scope.Add(themeResources);
             if (applicationResources != null)
@@ -35,7 +35,7 @@ namespace Xamlity.Markup
             return BuildObject(document.Root, assetResolver, scope);
         }
 
-        private static object BuildObject(XamlObjectNode node, IXamlAssetResolver assetResolver, List<object> scope, Style style = null)
+        private static object BuildObject(XamlObjectNode node, IXamlAssetResolver assetResolver, BuildScope scope, Style style = null)
         {
             try
             {
@@ -62,8 +62,10 @@ namespace Xamlity.Markup
                 scope.Add(instance);
                 try
                 {
+                    if (instance is FrameworkElement element)
+                        element.TemplatedParent = scope.TemplatedParent;
                     if (node.Name != null)
-                        ((FrameworkElement)instance).Name = node.Name;
+                        SetPropertyValue((DependencyObject)instance, FrameworkElement.NameProperty, node.Name, scope);
                     if (instance is Style)
                         foreach (XamlPropertyNode property in node.Properties)
                             if (property.PropertyName == nameof(Style.TargetType))
@@ -76,6 +78,8 @@ namespace Xamlity.Markup
                 {
                     scope.RemoveAt(scope.Count - 1);
                 }
+                if (instance is FrameworkElement namedElement && scope.Names != null && !string.IsNullOrEmpty(namedElement.Name))
+                    scope.Names.Add(namedElement.Name, namedElement);
                 return instance;
             }
             catch (XamlBuildException)
@@ -89,7 +93,7 @@ namespace Xamlity.Markup
             }
         }
 
-        private static Setter BuildSetter(XamlObjectNode node, Style style, IXamlAssetResolver assetResolver, List<object> scope)
+        private static Setter BuildSetter(XamlObjectNode node, Style style, IXamlAssetResolver assetResolver, BuildScope scope)
         {
             try
             {
@@ -162,10 +166,17 @@ namespace Xamlity.Markup
         }
 
         private static void ApplyProperty(object instance, Type type, XamlPropertyNode node,
-            IXamlAssetResolver assetResolver, List<object> scope)
+            IXamlAssetResolver assetResolver, BuildScope scope)
         {
             try
             {
+                if (instance is ControlTemplate template && node.PropertyName == "TemplateContent")
+                {
+                    if (node.Objects.Count > 1)
+                        throw new InvalidOperationException("ControlTemplate can have only one root element.");
+                    template.SetContent(node.Objects.Count == 0 ? null : node.Objects[0], scope.ToArray(), assetResolver);
+                    return;
+                }
                 if (instance is ResourceDictionary dictionary && node.PropertyName == "Entries")
                 {
                     AddResources(dictionary, node.Objects, assetResolver, scope);
@@ -190,7 +201,7 @@ namespace Xamlity.Markup
                 {
                     object value = ConvertText(node.TextValue, propertyType, dp, assetResolver);
                     if (dp != null)
-                        ((DependencyObject)instance).SetValue(dp, value);
+                        SetPropertyValue((DependencyObject)instance, dp, value, scope);
                     else
                         GetProperty(type, node.PropertyName).SetValue(instance, value);
                 }
@@ -229,7 +240,7 @@ namespace Xamlity.Markup
                             BindingOperations.SetBinding(element, dp, binding);
                         }
                         else if (dp != null)
-                            ((DependencyObject)instance).SetValue(dp, value);
+                            SetPropertyValue((DependencyObject)instance, dp, value, scope);
                         else
                             GetProperty(type, node.PropertyName).SetValue(instance, value);
                     }
@@ -247,7 +258,7 @@ namespace Xamlity.Markup
         }
 
         private static void AddResources(ResourceDictionary dictionary, List<XamlObjectNode> entries,
-            IXamlAssetResolver assetResolver, List<object> scope)
+            IXamlAssetResolver assetResolver, BuildScope scope)
         {
             foreach (XamlObjectNode entry in entries)
             {
@@ -269,6 +280,28 @@ namespace Xamlity.Markup
                     throw new XamlBuildException(entry.Line, entry.Column, exception.Message, exception);
                 }
             }
+        }
+
+        internal static FrameworkElement BuildTemplate(XamlObjectNode node, IXamlAssetResolver assetResolver,
+            object[] resources, DependencyObject parent, Dictionary<string, DependencyObject> names)
+        {
+            var scope = new BuildScope { TemplatedParent = parent, Names = names };
+            scope.AddRange(resources);
+            return (FrameworkElement)BuildObject(node, assetResolver, scope);
+        }
+
+        private static void SetPropertyValue(DependencyObject instance, DependencyProperty dp, object value, BuildScope scope)
+        {
+            if (scope.TemplatedParent != null)
+                instance.SetLayerValue(dp, ValueLayer.ParentTemplate, value);
+            else
+                instance.SetValue(dp, value);
+        }
+
+        private sealed class BuildScope : List<object>
+        {
+            internal DependencyObject TemplatedParent;
+            internal Dictionary<string, DependencyObject> Names;
         }
 
         private static Type GetType(string name)

@@ -65,6 +65,16 @@ namespace Xamlity.Properties
             return property;
         }
 
+        public DependencyProperty AddOwner(Type ownerType)
+        {
+            if (ownerType == null)
+                throw new ArgumentNullException(nameof(ownerType));
+            if (Registry.ContainsKey((ownerType, Name)))
+                throw new ArgumentException("The property is already registered for this owner type.", nameof(ownerType));
+            Registry.Add((ownerType, Name), this);
+            return this;
+        }
+
         internal static DependencyProperty FromName(Type ownerType, string name)
         {
             for (Type type = ownerType; type != null; type = type.BaseType)
