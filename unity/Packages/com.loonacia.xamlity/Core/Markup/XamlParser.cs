@@ -557,31 +557,17 @@ namespace Xamlity.Markup
                     string localName = separator < 0 ? name : name.Substring(separator + 1);
                     if (xmlNamespace == XamlTypeResolver.DefaultNamespace && localName == "StaticResource")
                     {
-                        if (arguments.Count != 1 || (arguments[0].Name != null && arguments[0].Name != "ResourceKey"))
-                            Error("Markup extension 'StaticResource' requires exactly one ResourceKey.");
-                        else
-                        {
-                            var extension = new XamlObjectNode
-                            {
-                                TypeName = $"{typeof(StaticResourceExtension).FullName}, {typeof(StaticResourceExtension).Assembly.GetName().Name}",
-                                Line = location.LineNumber, Column = location.LinePosition
-                            };
-                            extension.Properties.Add(new XamlPropertyNode { PropertyName = "ResourceKey", TextValue = arguments[0].Value,
-                                Line = location.LineNumber, Column = location.LinePosition });
+                        XamlObjectNode extension = ReadResourceExtension(arguments);
+                        if (extension != null)
                             property.Objects.Add(extension);
-                        }
                         return;
                     }
                     if (xmlNamespace == XamlTypeResolver.XamlNamespace && localName == "Type")
                     {
                         if (propertyType != typeof(Type))
                             Error("Markup extension 'x:Type' can only be used for Type values.");
-                        else if (arguments.Count != 1 ||
-                            (arguments[0].Name != null && arguments[0].Name != "TypeName") ||
-                            string.IsNullOrWhiteSpace(arguments[0].Value))
-                            Error("Markup extension 'x:Type' requires exactly one TypeName.");
                         else
-                            property.TextValue = ReadTypeName(arguments[0].Value);
+                            property.TextValue = ReadTypeExtension(arguments);
                         return;
                     }
                     XamlObjectNode binding = ReadBindingExtension(name, arguments);
@@ -631,7 +617,77 @@ namespace Xamlity.Markup
                 return type == null ? null : $"{type.FullName}, {type.Assembly.GetName().Name}";
             }
 
-            private XamlObjectNode ReadBindingExtension(string name, List<(string Name, string Value)> arguments)
+            private XamlObjectNode ReadResourceExtension(
+                List<(string Name, string Value, XamlMarkupExtensionParser.Extension Nested)> arguments)
+            {
+                if (arguments.Count != 1 || (arguments[0].Name != null && arguments[0].Name != "ResourceKey"))
+                {
+                    Error("Markup extension 'StaticResource' requires exactly one ResourceKey.");
+                    return null;
+                }
+                var extension = new XamlObjectNode
+                {
+                    TypeName = $"{typeof(StaticResourceExtension).FullName}, {typeof(StaticResourceExtension).Assembly.GetName().Name}",
+                    Line = location.LineNumber, Column = location.LinePosition
+                };
+                var key = new XamlPropertyNode { PropertyName = "ResourceKey", TextValue = arguments[0].Value,
+                    Line = location.LineNumber, Column = location.LinePosition };
+                if (arguments[0].Nested != null)
+                {
+                    XamlObjectNode nested = ReadNestedExtension(arguments[0].Nested, typeKey: true);
+                    if (nested == null)
+                        return null;
+                    key.Objects.Add(nested);
+                }
+                extension.Properties.Add(key);
+                return extension;
+            }
+
+            private string ReadTypeExtension(
+                List<(string Name, string Value, XamlMarkupExtensionParser.Extension Nested)> arguments)
+            {
+                foreach (var argument in arguments)
+                    if (argument.Nested != null)
+                    {
+                        Error($"Nested markup extension '{argument.Nested.Name}' is not supported here.");
+                        return null;
+                    }
+                if (arguments.Count != 1 || (arguments[0].Name != null && arguments[0].Name != "TypeName") ||
+                    string.IsNullOrWhiteSpace(arguments[0].Value))
+                {
+                    Error("Markup extension 'x:Type' requires exactly one TypeName.");
+                    return null;
+                }
+                return ReadTypeName(arguments[0].Value);
+            }
+
+            private XamlObjectNode ReadNestedExtension(XamlMarkupExtensionParser.Extension extension, bool typeKey)
+            {
+                int separator = extension.Name.IndexOf(':');
+                string xmlNamespace = reader.LookupNamespace(separator < 0 ? "" : extension.Name.Substring(0, separator));
+                string localName = separator < 0 ? extension.Name : extension.Name.Substring(separator + 1);
+                if (!typeKey && xmlNamespace == XamlTypeResolver.DefaultNamespace && localName == "StaticResource")
+                    return ReadResourceExtension(extension.Arguments);
+                if (typeKey && xmlNamespace == XamlTypeResolver.XamlNamespace && localName == "Type")
+                {
+                    string typeName = ReadTypeExtension(extension.Arguments);
+                    if (typeName == null)
+                        return null;
+                    var node = new XamlObjectNode
+                    {
+                        TypeName = $"{typeof(TypeExtension).FullName}, {typeof(TypeExtension).Assembly.GetName().Name}",
+                        Line = location.LineNumber, Column = location.LinePosition
+                    };
+                    node.Properties.Add(new XamlPropertyNode { PropertyName = "TypeName", TextValue = typeName,
+                        Line = location.LineNumber, Column = location.LinePosition });
+                    return node;
+                }
+                Error($"Nested markup extension '{extension.Name}' is not supported here.");
+                return null;
+            }
+
+            private XamlObjectNode ReadBindingExtension(string name,
+                List<(string Name, string Value, XamlMarkupExtensionParser.Extension Nested)> arguments)
             {
                 int separator = name.IndexOf(':');
                 string xmlNamespace = reader.LookupNamespace(separator < 0 ? "" : name.Substring(0, separator));
@@ -647,6 +703,11 @@ namespace Xamlity.Markup
                 int positionalCount = 0;
                 foreach (var argument in arguments)
                 {
+                    if (argument.Name == null && argument.Nested != null)
+                    {
+                        Error($"Nested markup extension '{argument.Nested.Name}' is not supported here.");
+                        return null;
+                    }
                     if (argument.Name == null && ++positionalCount > 1)
                     {
                         Error("Markup extension 'Binding' accepts at most one positional argument (Path).");
@@ -658,10 +719,18 @@ namespace Xamlity.Markup
                     Type propertyType = XamlTypeResolver.ResolveProperty(typeof(Binding), propertyName, out DependencyProperty dp);
                     if (propertyType == null)
                         Error($"Unknown or read-only property '{propertyName}' on type 'Binding'.");
-                    else
+                    else if (argument.Nested == null)
                         ValidateText(propertyName, argument.Value, propertyType, dp);
-                    binding.Properties.Add(new XamlPropertyNode { PropertyName = propertyName, TextValue = argument.Value,
-                        Line = location.LineNumber, Column = location.LinePosition });
+                    var property = new XamlPropertyNode { PropertyName = propertyName, TextValue = argument.Value,
+                        Line = location.LineNumber, Column = location.LinePosition };
+                    if (argument.Nested != null)
+                    {
+                        XamlObjectNode nested = ReadNestedExtension(argument.Nested, typeKey: false);
+                        if (nested == null)
+                            return null;
+                        property.Objects.Add(nested);
+                    }
+                    binding.Properties.Add(property);
                 }
                 return binding;
             }

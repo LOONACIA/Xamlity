@@ -30,9 +30,14 @@ namespace Xamlity.Markup
             try
             {
                 Type type = GetType(node.TypeName);
+                if (type == typeof(TypeExtension))
+                    return GetType(node.Properties[0].TextValue);
                 if (type == typeof(StaticResourceExtension))
                 {
-                    string key = (string)ConvertText(node.Properties[0].TextValue, typeof(string), null, assetResolver);
+                    XamlPropertyNode keyNode = node.Properties[0];
+                    object key = keyNode.TextValue != null
+                        ? ConvertText(keyNode.TextValue, typeof(string), null, assetResolver)
+                        : BuildObject(keyNode.Objects[0], assetResolver, scope);
                     for (int i = scope.Count - 1; i >= 0; i--)
                     {
                         ResourceDictionary resources = scope[i] is FrameworkElement element ? element.Resources : scope[i] as ResourceDictionary;

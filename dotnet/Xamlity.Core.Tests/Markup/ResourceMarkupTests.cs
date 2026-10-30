@@ -141,11 +141,62 @@ namespace Xamlity.Core.Tests.Markup
                 "x:Key is only valid on resource dictionary entries.", 2, 3);
         }
 
-        [Test]
-        public void NestedStaticResourceExtensionsRemainUnsupported()
+        [TestCase("{StaticResource {x:Type Border}}")]
+        [TestCase("{StaticResource ResourceKey={x:Type TypeName=Border}}")]
+        [TestCase("{ StaticResource ResourceKey = { x:Type Border } }")]
+        public void TypeKeysResolveImplicitStylesAndBasedOnInOuterScope(string extension)
         {
-            AssertError("<Border " + Namespaces + "\n  Style=\"{StaticResource {x:Type Border}}\"/>",
-                "Nested markup extensions are not supported.", 2, 3);
+            var root = Build<Border>("<Border " + Namespaces + "><Border.Resources>" +
+                "<Style TargetType=\"Border\"><Setter Property=\"Width\" Value=\"42\"/></Style></Border.Resources>" +
+                "<Border><Border.Resources><Style TargetType=\"Border\" BasedOn=\"" + extension + "\">" +
+                "<Setter Property=\"Height\" Value=\"24\"/></Style></Border.Resources>" +
+                "<Border Style=\"" + extension + "\"/></Border></Border>");
+            var inner = (Border)root.Child;
+            var child = (Border)inner.Child;
+            Assert.That(child.Style, Is.SameAs(inner.Resources[typeof(Border)]));
+            Assert.That(child.Style.BasedOn, Is.SameAs(root.Resources[typeof(Border)]));
+            Assert.That(child.Width, Is.EqualTo(42));
+            Assert.That(child.Height, Is.EqualTo(24));
+        }
+
+        [Test]
+        public void NamedTypeKeyResolvesClrNamespaceAndPrefixAliases()
+        {
+            var root = Build<Border>("<Border " + Namespaces +
+                " xmlns:local=\"clr-namespace:Xamlity.Core.Tests.Markup;assembly=Xamlity.Core.Tests\"" +
+                " xmlns:ui=\"https://github.com/loonacia/xamlity\" xmlns:lang=\"http://schemas.microsoft.com/winfx/2006/xaml\">" +
+                "<Border.Resources><Style TargetType=\"local:MyBorder\"><Setter Property=\"Width\" Value=\"13\"/></Style>" +
+                "</Border.Resources><local:MyBorder Style=\"{ui:StaticResource ResourceKey={lang:Type local:MyBorder}}\"/></Border>");
+            Assert.That(((MyBorder)root.Child).Style, Is.SameAs(root.Resources[typeof(MyBorder)]));
+            Assert.That(((MyBorder)root.Child).Width, Is.EqualTo(13));
+        }
+
+        [TestCase("{StaticResource {StaticResource key}}", "StaticResource")]
+        [TestCase("{StaticResource ResourceKey={Binding Name}}", "Binding")]
+        [TestCase("{StaticResource {x:Type {StaticResource key}}}", "StaticResource")]
+        [TestCase("{StaticResource {x:Type TypeName={Binding Name}}}", "Binding")]
+        [TestCase("{StaticResource {x:Static Key}}", "x:Static")]
+        [TestCase("{StaticResource {x:Type {x:Type Border}}}", "x:Type")]
+        public void UnsupportedNestedResourceCombinationsReportWrittenName(string extension, string name)
+        {
+            AssertError("<Border " + Namespaces + "\n  Style=\"" + extension + "\"/>",
+                "Nested markup extension '" + name + "' is not supported here.", 2, 3);
+        }
+
+        [Test]
+        public void TopLevelTypeExtensionRejectsNestedExtensions()
+        {
+            AssertError("<ResourceDictionary " + Namespaces + "><Style x:Key=\"style\"\n  TargetType=\"{x:Type {StaticResource type}}\"/></ResourceDictionary>",
+                "Nested markup extension 'StaticResource' is not supported here.", 2, 3);
+        }
+
+        [TestCase("{StaticResource {x:Type Border}", "expected closing '}'")]
+        [TestCase("{StaticResource {x:Type Border}}}", "unexpected text after '}'")]
+        [TestCase("{StaticResource {x:Type Border}x}", "unexpected text after a nested extension")]
+        public void NestedTypeKeySyntaxErrorsKeepAttributeLocation(string extension, string message)
+        {
+            AssertError("<Border " + Namespaces + "\n  Style=\"" + extension + "\"/>",
+                "Invalid markup extension syntax: " + message + ".", 2, 3);
         }
 
         [Test]
@@ -317,6 +368,7 @@ namespace Xamlity.Core.Tests.Markup
             Add("type", typeof(Border));
             Add("property", Border.HeightProperty);
             Add("c", "text");
+            Add("P", "prefix:");
         }
 
         private sealed class ResourceImageSource : ImageSource

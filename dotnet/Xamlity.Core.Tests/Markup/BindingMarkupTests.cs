@@ -235,7 +235,23 @@ namespace Xamlity.Core.Tests.Markup
         [TestCase("{x:Static Something}", "Markup extension 'x:Static' is not supported.")]
         [TestCase("{Unknown}", "Markup extension 'Unknown' is not supported.")]
         [TestCase("{x:Binding}", "Markup extension 'x:Binding' is not supported.")]
-        [TestCase("{Binding Converter={StaticResource c}}", "Nested markup extensions are not supported.")]
+        [TestCase("{Binding Converter={Binding Name}}", "Nested markup extension 'Binding' is not supported here.")]
+        [TestCase("{Binding ConverterParameter={x:Type Border}}", "Nested markup extension 'x:Type' is not supported here.")]
+        [TestCase("{Binding {StaticResource P}}", "Nested markup extension 'StaticResource' is not supported here.")]
+        [TestCase("{Binding {x:Type Border}}", "Nested markup extension 'x:Type' is not supported here.")]
+        [TestCase("{Binding Converter={x:Static Upper}}", "Nested markup extension 'x:Static' is not supported here.")]
+        [TestCase("{Binding Converter={Unknown}}", "Nested markup extension 'Unknown' is not supported here.")]
+        [TestCase("{Binding Converter={StaticResource {Binding Name}}}", "Nested markup extension 'Binding' is not supported here.")]
+        [TestCase("{Binding Converter={StaticResource c}", "Invalid markup extension syntax: expected closing '}'.")]
+        [TestCase("{Binding Converter={StaticResource c", "Invalid markup extension syntax: expected closing '}'.")]
+        [TestCase("{Binding Converter={StaticResource c}}}", "Invalid markup extension syntax: unexpected text after '}'.")]
+        [TestCase("{Binding Converter={StaticResource c}tail}", "Invalid markup extension syntax: unexpected text after a nested extension.")]
+        [TestCase("{Binding Converter={StaticResource c} tail}", "Invalid markup extension syntax: unexpected text after a nested extension.")]
+        [TestCase("{Binding Converter={StaticResource c}=tail}", "Invalid markup extension syntax: unexpected text after a nested extension.")]
+        [TestCase("{Binding Converter=prefix{StaticResource c}}", "Invalid markup extension syntax: a nested extension must enclose the entire value.")]
+        [TestCase("{Binding Converter={StaticResource 'c}}", "Invalid markup extension syntax: unterminated quoted value.")]
+        [TestCase("{Binding Converter={StaticResource c}, Converter={StaticResource d}}", "Property 'Converter' is set more than once.")]
+        [TestCase("{Binding ElementName={StaticResource P}}", "Unknown or read-only property 'ElementName' on type 'Binding'.")]
         [TestCase("{Binding", "Invalid markup extension syntax: expected closing '}'.")]
         [TestCase("{Binding Path='A}", "Invalid markup extension syntax: unterminated quoted value.")]
         [TestCase("{ }", "Invalid markup extension syntax: expected a type name.")]
@@ -257,6 +273,124 @@ namespace Xamlity.Core.Tests.Markup
         {
             AssertError(Attribute("TextBlock", "Text", value), message, 2, 3);
         }
+
+        [Test]
+        public void NestedConverterResourceIsSupported()
+        {
+            var root = Build<Border>(NestedBindingXaml("{Binding Converter={StaticResource c}}",
+                "<t:UpperCaseConverter x:Key=\"c\"/>"));
+            var text = (TextBlock)root.Child;
+            text.DataContext = "hello";
+            Assert.That(text.Text, Is.EqualTo("HELLO"));
+            Assert.That(BindingOperations.GetBindingExpression(text, TextBlock.TextProperty).ParentBinding.Converter,
+                Is.SameAs(root.Resources["c"]));
+        }
+
+        [TestCase("{Binding Name, Converter={StaticResource Upper}, ConverterParameter={StaticResource P}}")]
+        [TestCase("{ Binding Path = Name , Converter = { StaticResource ResourceKey = Upper } , ConverterParameter = { StaticResource P } }")]
+        public void NestedResourcesConvertAndTrackSourceChangesAfterIrRoundTrip(string extension)
+        {
+            var root = Build<Border>(NestedBindingXaml(extension));
+            var text = (TextBlock)root.Child;
+            var model = new ClrNamespaceModel { Name = "first" };
+            root.DataContext = model;
+            Assert.That(text.Text, Is.EqualTo("prefix:FIRST!"));
+            model.Name = "second";
+            Assert.That(text.Text, Is.EqualTo("prefix:SECOND!"));
+            Binding binding = BindingOperations.GetBindingExpression(text, TextBlock.TextProperty).ParentBinding;
+            Assert.That(binding.Converter, Is.SameAs(root.Resources["Upper"]));
+            Assert.That(binding.ConverterParameter, Is.SameAs(root.Resources["P"]));
+        }
+
+        [TestCase("'{odd},=key'")]
+        [TestCase("\"{odd},=key\"")]
+        [TestCase("\\{odd\\}\\,\\=key")]
+        public void NestedResourceKeysPreserveQuotedBracesAndEscapes(string key)
+        {
+            var root = Build<Border>(NestedBindingXaml("{Binding Converter={StaticResource " + key + "}}",
+                "<t:UpperCaseConverter x:Key=\"{}{odd},=key\"/>"));
+            var text = (TextBlock)root.Child;
+            text.DataContext = "hello";
+            Assert.That(text.Text, Is.EqualTo("HELLO"));
+        }
+
+        [Test]
+        public void NestedBindingResourceIrPreservesArgumentObjectsAndAttributeLocations()
+        {
+            XamlDocument document = RoundTrip(Parse(Attribute("TextBlock", "Text",
+                "{Binding Name, Converter={StaticResource Upper}, ConverterParameter={StaticResource {x:Type Border}}}")));
+            XamlObjectNode binding = document.Root.Properties.Single().Objects.Single();
+            Assert.That(binding.Properties[0].TextValue, Is.EqualTo("Name"));
+            XamlPropertyNode converter = binding.Properties[1];
+            Assert.That(converter.PropertyName, Is.EqualTo("Converter"));
+            Assert.That(converter.TextValue, Is.Null);
+            Assert.That(Type.GetType(converter.Objects.Single().TypeName).Name, Is.EqualTo("StaticResourceExtension"));
+            Assert.That(converter.Objects.Single().Properties.Single().TextValue, Is.EqualTo("Upper"));
+            XamlPropertyNode parameter = binding.Properties[2];
+            Assert.That(parameter.PropertyName, Is.EqualTo("ConverterParameter"));
+            Assert.That(parameter.TextValue, Is.Null);
+            XamlPropertyNode key = parameter.Objects.Single().Properties.Single();
+            Assert.That(key.PropertyName, Is.EqualTo("ResourceKey"));
+            Assert.That(key.TextValue, Is.Null);
+            XamlObjectNode type = key.Objects.Single();
+            Assert.That(Type.GetType(type.TypeName).Name, Is.EqualTo("TypeExtension"));
+            Assert.That(type.Properties.Single().PropertyName, Is.EqualTo("TypeName"));
+            Assert.That(type.Properties.Single().TextValue, Is.EqualTo("Xamlity.Controls.Border, Xamlity.Core"));
+            AssertLocations(document.Root.Properties.Single());
+
+            void AssertLocations(XamlPropertyNode property)
+            {
+                Assert.That((property.Line, property.Column), Is.EqualTo((2, 3)));
+                foreach (XamlObjectNode child in property.Objects)
+                {
+                    Assert.That((child.Line, child.Column), Is.EqualTo((2, 3)));
+                    foreach (XamlPropertyNode argument in child.Properties)
+                        AssertLocations(argument);
+                }
+            }
+        }
+
+        [Test]
+        public void BindingParameterCanResolveATypeKey()
+        {
+            var root = Build<Border>(NestedBindingXaml("{Binding ConverterParameter={StaticResource {x:Type Border}}}",
+                "<Style TargetType=\"Border\"/>"));
+            Binding binding = BindingOperations.GetBindingExpression((TextBlock)root.Child, TextBlock.TextProperty).ParentBinding;
+            Assert.That(binding.ConverterParameter, Is.SameAs(root.Resources[typeof(Border)]));
+        }
+
+        [Test]
+        public void NestedConverterTypeMismatchUsesBuildPropertyError()
+        {
+            XamlDocument document = RoundTrip(Parse(NestedBindingXaml("{Binding Name, Converter={StaticResource P}}")));
+            var error = Assert.Throws<XamlBuildException>(() => XamlBuilder.Build(document));
+            Assert.That((error.Line, error.Column), Is.EqualTo((2, 3)));
+            Assert.That(error.Message, Does.StartWith("(2,3): Cannot set property 'Converter':"));
+            Assert.That(error.InnerException, Is.TypeOf<ArgumentException>());
+        }
+
+        [Test]
+        public void NestedResourceLookupFailureKeepsAttributeLocation()
+        {
+            XamlDocument document = RoundTrip(Parse(NestedBindingXaml("{Binding Converter={StaticResource Missing}}")));
+            var error = Assert.Throws<XamlBuildException>(() => XamlBuilder.Build(document));
+            Assert.That((error.Line, error.Column), Is.EqualTo((2, 3)));
+            Assert.That(error.Message, Is.EqualTo("(2,3): Resource 'Missing' was not found."));
+        }
+
+        [Test]
+        public void NestedResourcesDoNotBypassDataTypePathValidation()
+        {
+            string xaml = NestedBindingXaml("{Binding Missing, Converter={StaticResource Upper}}");
+            AssertError(xaml, "Binding path 'Missing': property 'Missing' was not found on type '" +
+                typeof(ClrNamespaceModel).FullName + "' (x:DataType).", 2, 3);
+        }
+
+        private static string NestedBindingXaml(string extension, string resources = null) =>
+            "<Border " + Namespaces + " xmlns:t=\"clr-namespace:Xamlity.Core.Tests.Markup;assembly=Xamlity.Core.Tests\">" +
+            "<Border.Resources>" + (resources ?? "<t:SeedResources><t:UpperCaseConverter x:Key=\"Upper\" Suffix=\"!\"/></t:SeedResources>") +
+            "</Border.Resources><TextBlock x:DataType=\"t:ClrNamespaceModel\"\n  Text=\"" +
+            extension.Replace("&", "&amp;").Replace("\"", "&quot;") + "\"/></Border>";
 
         [Test]
         public void RejectsBindingOnClrProperties()
