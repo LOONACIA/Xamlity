@@ -65,7 +65,8 @@ namespace Xamlity.Markup
             // Starts on an element and leaves the reader on the following node.
             internal XamlObjectNode ReadObject(bool isRoot = false, Type targetType = null,
                 string propertyName = null, bool allowBinding = false, Type parentDataType = null,
-                Type styleTargetType = null, Type styleOwnerType = null)
+                Type styleTargetType = null, Type styleOwnerType = null, bool resourceEntry = false,
+                bool deferredStyleTarget = false)
             {
                 ReadNamespaceDeclarations();
                 Type dataType = ReadDataType(parentDataType);
@@ -81,8 +82,8 @@ namespace Xamlity.Markup
                 if (type != null)
                 {
                     node.TypeName = $"{type.FullName}, {type.Assembly.GetName().Name}";
-                    if (isRoot && !typeof(UIElement).IsAssignableFrom(type))
-                        Error($"Root element '{name}' must be a UIElement.");
+                    if (isRoot && !typeof(UIElement).IsAssignableFrom(type) && !typeof(ResourceDictionary).IsAssignableFrom(type))
+                        Error($"Root element '{name}' must be a UIElement or ResourceDictionary.");
                     if (type == typeof(Binding) && !allowBinding)
                         Error(BindingTargetError);
                     else if (type != typeof(Binding) && targetType != null && !targetType.IsAssignableFrom(type))
@@ -97,10 +98,7 @@ namespace Xamlity.Markup
                         if ((reader.LocalName == nameof(Setter.Property) || reader.LocalName == "Setter.Property") &&
                             (reader.NamespaceURI.Length == 0 || reader.NamespaceURI == XamlTypeResolver.DefaultNamespace))
                         {
-                            if (IsMarkupExtension(reader.Value))
-                                ReadAttributeValue(type, typeof(DependencyProperty), null,
-                                    new XamlPropertyNode { PropertyName = nameof(Setter.Property) }, dataType);
-                            else
+                            if (!IsMarkupExtension(reader.Value) && (!deferredStyleTarget || reader.Value.Contains(".")))
                             {
                                 setterProperty = XamlTypeResolver.ResolveSetterProperty(styleTargetType, reader.Value, out string error);
                                 if (error != null)
@@ -110,9 +108,13 @@ namespace Xamlity.Markup
                         }
                     reader.MoveToElement();
                 }
-                ReadAttributes(type, node, assigned, dataType, parentDataType, setterProperty);
+                ReadAttributes(type, node, assigned, dataType, parentDataType, setterProperty, resourceEntry);
+                bool isDictionary = type != null && typeof(ResourceDictionary).IsAssignableFrom(type);
+                var resourceKeys = new HashSet<object>();
                 bool isStyle = type != null && typeof(Style).IsAssignableFrom(type);
                 styleTargetType = isStyle ? GetStyleTargetType(node) : styleTargetType;
+                if (isStyle)
+                    deferredStyleTarget = HasObjectProperty(node, nameof(Style.TargetType));
                 string contentName = type?.GetCustomAttribute<ContentPropertyAttribute>(true)?.Name;
                 Type contentType = contentName == null ? null :
                     XamlTypeResolver.ResolveProperty(type, contentName, out _, allowCollections: true);
@@ -136,7 +138,16 @@ namespace Xamlity.Markup
                         if (reader.LocalName.Contains("."))
                         {
                             ReadPropertyElement(type, node, assigned, dataType, parentDataType,
-                                isStyle ? styleTargetType : null, setterProperty);
+                                isStyle ? styleTargetType : null, setterProperty, isStyle && deferredStyleTarget);
+                            continue;
+                        }
+                        if (isDictionary)
+                        {
+                            XamlObjectNode entry = ReadObject(parentDataType: dataType, resourceEntry: true);
+                            ValidateResourceEntry(entry, resourceKeys);
+                            var entries = new XamlPropertyNode { PropertyName = "Entries", Line = entry.Line, Column = entry.Column };
+                            entries.Objects.Add(entry);
+                            node.Properties.Add(entries);
                             continue;
                         }
                         if (type != null && XamlTypeResolver.Resolve(reader.NamespaceURI, reader.LocalName) != typeof(Binding))
@@ -153,9 +164,16 @@ namespace Xamlity.Markup
                             }
                             else if (collection == null)
                                 Error($"Content property '{contentName}' accepts only one child.");
+                            else if (node.Properties[node.Properties.Count - 1] != content)
+                            {
+                                content = new XamlPropertyNode { PropertyName = contentName,
+                                    Line = location.LineNumber, Column = location.LinePosition };
+                                node.Properties.Add(content);
+                            }
                         }
                         XamlObjectNode child = ReadObject(targetType: childType, propertyName: contentName,
-                            parentDataType: dataType, styleTargetType: isStyle ? styleTargetType : null);
+                            parentDataType: dataType, styleTargetType: isStyle ? styleTargetType : null,
+                            deferredStyleTarget: isStyle && deferredStyleTarget);
                         content?.Objects.Add(child);
                     }
                     else
@@ -180,6 +198,31 @@ namespace Xamlity.Markup
                     if (property.PropertyName == nameof(Style.TargetType) && property.TextValue != null)
                         return Type.GetType(property.TextValue, throwOnError: false);
                 return null;
+            }
+
+            private void ValidateResourceEntry(XamlObjectNode node, HashSet<object> keys)
+            {
+                Type type = node.TypeName == null ? null : Type.GetType(node.TypeName, throwOnError: false);
+                object key = node.Key;
+                if (key == null && type != null && typeof(Style).IsAssignableFrom(type))
+                {
+                    key = GetStyleTargetType(node);
+                    if (key == null && HasObjectProperty(node, nameof(Style.TargetType)))
+                        return;
+                }
+                if (key == null)
+                    errors.Add(new XamlError(fileName, node.Line, node.Column, "Resource dictionary entries require an x:Key."));
+                else if (!keys.Add(key))
+                    errors.Add(new XamlError(fileName, node.Line, node.Column,
+                        $"Duplicate resource key '{(key is Type keyType ? keyType.Name : key)}'."));
+            }
+
+            private static bool HasObjectProperty(XamlObjectNode node, string name)
+            {
+                foreach (XamlPropertyNode property in node.Properties)
+                    if (property.PropertyName == name && property.Objects.Count == 1)
+                        return true;
+                return false;
             }
 
             private void ValidateStyleAndSetter(Type type, XamlObjectNode node, HashSet<string> assigned,
@@ -213,7 +256,8 @@ namespace Xamlity.Markup
             }
 
             private void ReadPropertyElement(Type ownerType, XamlObjectNode owner, HashSet<string> assigned,
-                Type dataType, Type parentDataType, Type styleTargetType, DependencyProperty setterProperty)
+                Type dataType, Type parentDataType, Type styleTargetType, DependencyProperty setterProperty,
+                bool deferredStyleTarget)
             {
                 ReadNamespaceDeclarations();
                 dataType = ReadDataType(dataType);
@@ -257,11 +301,16 @@ namespace Xamlity.Markup
 
                 while (reader.MoveToNextAttribute())
                     if (reader.NamespaceURI != "http://www.w3.org/2000/xmlns/" && !IsDataTypeAttribute())
-                        Error("Attributes on property elements are not supported.");
+                        Error(reader.NamespaceURI == XamlTypeResolver.XamlNamespace && reader.LocalName == "Key"
+                            ? "x:Key is only valid on resource dictionary entries."
+                            : "Attributes on property elements are not supported.");
                 reader.MoveToElement();
                 Type collection = ownerType == typeof(Setter) && propertyName == nameof(Setter.Value)
                     ? null : XamlTypeResolver.GetCollectionInterface(propertyType);
                 Type childType = collection == null ? propertyType : collection.GetGenericArguments()[0];
+                bool resources = propertyType == typeof(ResourceDictionary);
+                if (resources)
+                    childType = null;
                 bool empty = reader.IsEmptyElement;
                 reader.Read();
                 if (!empty)
@@ -283,7 +332,7 @@ namespace Xamlity.Markup
                                     parentDataType: isBinding && dp == FrameworkElement.DataContextProperty ? parentDataType : dataType,
                                     styleTargetType: styleTargetType,
                                     styleOwnerType: propertyType == typeof(Style) && propertyName != nameof(Style.BasedOn)
-                                        ? ownerType : null));
+                                        ? ownerType : null, resourceEntry: resources, deferredStyleTarget: deferredStyleTarget));
                             }
                         }
                         else
@@ -297,7 +346,18 @@ namespace Xamlity.Markup
                     }
                     reader.Read();
                 }
-                if (propertyType != null && collection == null && node.Objects.Count != 1)
+                if (resources)
+                {
+                    bool dictionaryAssignment = node.Objects.Count == 1 && node.Objects[0].Key == null && node.Objects[0].TypeName != null &&
+                        typeof(ResourceDictionary).IsAssignableFrom(Type.GetType(node.Objects[0].TypeName, throwOnError: false));
+                    if (!dictionaryAssignment)
+                    {
+                        var keys = new HashSet<object>();
+                        foreach (XamlObjectNode entry in node.Objects)
+                            ValidateResourceEntry(entry, keys);
+                    }
+                }
+                else if (propertyType != null && collection == null && node.Objects.Count != 1)
                     errors.Add(new XamlError(fileName, node.Line, node.Column,
                         $"Property '{propertyName}' requires exactly one object."));
             }
@@ -358,13 +418,29 @@ namespace Xamlity.Markup
             }
 
             private void ReadAttributes(Type type, XamlObjectNode node, HashSet<string> assigned,
-                Type dataType, Type parentDataType, DependencyProperty setterProperty)
+                Type dataType, Type parentDataType, DependencyProperty setterProperty, bool resourceEntry)
             {
                 while (reader.MoveToNextAttribute())
                 {
                     if (reader.NamespaceURI == "http://www.w3.org/2000/xmlns/" || IsDataTypeAttribute())
                         continue;
                     string name = reader.LocalName;
+                    if (reader.NamespaceURI == XamlTypeResolver.XamlNamespace && name == "Key")
+                    {
+                        if (!resourceEntry)
+                            Error("x:Key is only valid on resource dictionary entries.");
+                        else if (IsMarkupExtension(reader.Value))
+                        {
+                            node.Key = reader.Value;
+                            Error("x:Key does not support markup extensions.");
+                        }
+                        else
+                        {
+                            XamlValueConverter.TryConvert(reader.Value, typeof(string), null, out object key, out _);
+                            node.Key = (string)key;
+                        }
+                        continue;
+                    }
                     bool xName = reader.NamespaceURI == XamlTypeResolver.XamlNamespace && name == "Name";
                     if (reader.NamespaceURI == XamlTypeResolver.XamlNamespace && !xName)
                     {
@@ -439,12 +515,11 @@ namespace Xamlity.Markup
                     }
                     var property = new XamlPropertyNode { PropertyName = name, OwnerTypeName = ownerTypeName,
                         Line = location.LineNumber, Column = location.LinePosition };
-                    if (type == typeof(Setter) && name == nameof(Setter.Property))
+                    if (type == typeof(Setter) && name == nameof(Setter.Property) && !IsMarkupExtension(reader.Value))
                         property.TextValue = reader.Value;
                     else if (type == typeof(Setter) && name == nameof(Setter.Value))
                     {
-                        if (setterProperty != null)
-                            ReadAttributeValue(type, setterProperty.PropertyType, setterProperty, property, dataType);
+                        ReadAttributeValue(type, setterProperty?.PropertyType ?? typeof(object), setterProperty, property, dataType);
                     }
                     else
                         ReadAttributeValue(type, propertyType, dp, property,
@@ -480,6 +555,23 @@ namespace Xamlity.Markup
                     int separator = name.IndexOf(':');
                     string xmlNamespace = reader.LookupNamespace(separator < 0 ? "" : name.Substring(0, separator));
                     string localName = separator < 0 ? name : name.Substring(separator + 1);
+                    if (xmlNamespace == XamlTypeResolver.DefaultNamespace && localName == "StaticResource")
+                    {
+                        if (arguments.Count != 1 || (arguments[0].Name != null && arguments[0].Name != "ResourceKey"))
+                            Error("Markup extension 'StaticResource' requires exactly one ResourceKey.");
+                        else
+                        {
+                            var extension = new XamlObjectNode
+                            {
+                                TypeName = $"{typeof(StaticResourceExtension).FullName}, {typeof(StaticResourceExtension).Assembly.GetName().Name}",
+                                Line = location.LineNumber, Column = location.LinePosition
+                            };
+                            extension.Properties.Add(new XamlPropertyNode { PropertyName = "ResourceKey", TextValue = arguments[0].Value,
+                                Line = location.LineNumber, Column = location.LinePosition });
+                            property.Objects.Add(extension);
+                        }
+                        return;
+                    }
                     if (xmlNamespace == XamlTypeResolver.XamlNamespace && localName == "Type")
                     {
                         if (propertyType != typeof(Type))

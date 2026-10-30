@@ -22,26 +22,45 @@ namespace Xamlity.Markup
         {
             if (document == null)
                 throw new ArgumentNullException(nameof(document));
-            return BuildObject(document.Root, assetResolver);
+            return BuildObject(document.Root, assetResolver, new List<object>());
         }
 
-        private static object BuildObject(XamlObjectNode node, IXamlAssetResolver assetResolver, Style style = null)
+        private static object BuildObject(XamlObjectNode node, IXamlAssetResolver assetResolver, List<object> scope, Style style = null)
         {
             try
             {
                 Type type = GetType(node.TypeName);
+                if (type == typeof(StaticResourceExtension))
+                {
+                    string key = (string)ConvertText(node.Properties[0].TextValue, typeof(string), null, assetResolver);
+                    for (int i = scope.Count - 1; i >= 0; i--)
+                    {
+                        ResourceDictionary resources = scope[i] is FrameworkElement element ? element.Resources : scope[i] as ResourceDictionary;
+                        if (resources != null && resources.Contains(key))
+                            return resources[key];
+                    }
+                    throw new XamlBuildException(node.Line, node.Column, $"Resource '{key}' was not found.");
+                }
                 if (type == typeof(Setter))
-                    return BuildSetter(node, style, assetResolver);
+                    return BuildSetter(node, style, assetResolver, scope);
                 object instance = Activator.CreateInstance(type);
-                if (node.Name != null)
-                    ((FrameworkElement)instance).Name = node.Name;
-                if (instance is Style)
+                scope.Add(instance);
+                try
+                {
+                    if (node.Name != null)
+                        ((FrameworkElement)instance).Name = node.Name;
+                    if (instance is Style)
+                        foreach (XamlPropertyNode property in node.Properties)
+                            if (property.PropertyName == nameof(Style.TargetType))
+                                ApplyProperty(instance, type, property, assetResolver, scope);
                     foreach (XamlPropertyNode property in node.Properties)
-                        if (property.PropertyName == nameof(Style.TargetType))
-                            ApplyProperty(instance, type, property, assetResolver);
-                foreach (XamlPropertyNode property in node.Properties)
-                    if (!(instance is Style) || property.PropertyName != nameof(Style.TargetType))
-                        ApplyProperty(instance, type, property, assetResolver);
+                        if (!(instance is Style) || property.PropertyName != nameof(Style.TargetType))
+                            ApplyProperty(instance, type, property, assetResolver, scope);
+                }
+                finally
+                {
+                    scope.RemoveAt(scope.Count - 1);
+                }
                 return instance;
             }
             catch (XamlBuildException)
@@ -55,7 +74,7 @@ namespace Xamlity.Markup
             }
         }
 
-        private static Setter BuildSetter(XamlObjectNode node, Style style, IXamlAssetResolver assetResolver)
+        private static Setter BuildSetter(XamlObjectNode node, Style style, IXamlAssetResolver assetResolver, List<object> scope)
         {
             try
             {
@@ -70,12 +89,21 @@ namespace Xamlity.Markup
                     else
                         throw new InvalidOperationException($"Unknown or read-only property '{property.PropertyName}'.");
                 }
-                if (propertyNode?.TextValue == null)
+                if (propertyNode == null)
                     throw new InvalidOperationException("Setter requires a Property.");
-                DependencyProperty dp = XamlTypeResolver.ResolveSetterProperty(style?.TargetType,
-                    propertyNode.TextValue, out string error);
-                if (error != null)
-                    throw new InvalidOperationException(error);
+                DependencyProperty dp;
+                if (propertyNode.TextValue != null)
+                {
+                    dp = XamlTypeResolver.ResolveSetterProperty(style?.TargetType, propertyNode.TextValue, out string error);
+                    if (error != null)
+                        throw new InvalidOperationException(error);
+                }
+                else
+                {
+                    if (propertyNode.Objects.Count != 1)
+                        throw new InvalidOperationException("Setter requires a Property.");
+                    dp = (DependencyProperty)BuildObject(propertyNode.Objects[0], assetResolver, scope);
+                }
                 if (valueNode == null)
                     throw new InvalidOperationException("Setter requires a Value.");
                 object value;
@@ -85,11 +113,15 @@ namespace Xamlity.Markup
                 {
                     if (valueNode.Objects.Count != 1)
                         throw new InvalidOperationException("Property 'Value' requires exactly one object.");
-                    value = BuildObject(valueNode.Objects[0], assetResolver);
+                    value = BuildObject(valueNode.Objects[0], assetResolver, scope);
                 }
                 var setter = new Setter(dp, value);
                 setter.Seal();
                 return setter;
+            }
+            catch (XamlBuildException)
+            {
+                throw;
             }
             catch (Exception exception)
             {
@@ -115,10 +147,15 @@ namespace Xamlity.Markup
         }
 
         private static void ApplyProperty(object instance, Type type, XamlPropertyNode node,
-            IXamlAssetResolver assetResolver)
+            IXamlAssetResolver assetResolver, List<object> scope)
         {
             try
             {
+                if (instance is ResourceDictionary dictionary && node.PropertyName == "Entries")
+                {
+                    AddResources(dictionary, node.Objects, assetResolver, scope);
+                    return;
+                }
                 DependencyProperty dp;
                 Type propertyType;
                 if (node.OwnerTypeName != null)
@@ -144,6 +181,15 @@ namespace Xamlity.Markup
                 }
                 else
                 {
+                    if (propertyType == typeof(ResourceDictionary) &&
+                        !(node.Objects.Count == 1 && node.Objects[0].Key == null &&
+                            (typeof(ResourceDictionary).IsAssignableFrom(GetType(node.Objects[0].TypeName)) ||
+                             GetType(node.Objects[0].TypeName) == typeof(StaticResourceExtension))))
+                    {
+                        var resources = (ResourceDictionary)GetProperty(type, node.PropertyName).GetValue(instance);
+                        AddResources(resources, node.Objects, assetResolver, scope);
+                        return;
+                    }
                     Type collection = XamlTypeResolver.GetCollectionInterface(propertyType);
                     if (collection != null)
                     {
@@ -154,13 +200,13 @@ namespace Xamlity.Markup
                             CollectionAddMethods.Add(collection, add);
                         }
                         foreach (XamlObjectNode child in node.Objects)
-                            add.Invoke(children, new[] { BuildObject(child, assetResolver, instance as Style) });
+                            add.Invoke(children, new[] { BuildObject(child, assetResolver, scope, instance as Style) });
                     }
                     else
                     {
                         if (node.Objects.Count != 1)
                             throw new InvalidOperationException("A single content property requires exactly one object.");
-                        object value = BuildObject(node.Objects[0], assetResolver);
+                        object value = BuildObject(node.Objects[0], assetResolver, scope);
                         if (value is Binding binding)
                         {
                             if (!(instance is FrameworkElement element) || dp == null)
@@ -182,6 +228,31 @@ namespace Xamlity.Markup
             {
                 throw new XamlBuildException(node.Line, node.Column,
                     $"Cannot set property '{node.PropertyName}': {exception.Message}", exception);
+            }
+        }
+
+        private static void AddResources(ResourceDictionary dictionary, List<XamlObjectNode> entries,
+            IXamlAssetResolver assetResolver, List<object> scope)
+        {
+            foreach (XamlObjectNode entry in entries)
+            {
+                object value = BuildObject(entry, assetResolver, scope);
+                object key = (object)entry.Key ?? (value as Style)?.TargetType;
+                try
+                {
+                    if (key == null)
+                        throw new InvalidOperationException("Resource dictionary entries require an x:Key.");
+                    dictionary.Add(key, value);
+                }
+                catch (ArgumentException exception)
+                {
+                    throw new XamlBuildException(entry.Line, entry.Column,
+                        $"Duplicate resource key '{(key is Type keyType ? keyType.Name : key)}'.", exception);
+                }
+                catch (Exception exception)
+                {
+                    throw new XamlBuildException(entry.Line, entry.Column, exception.Message, exception);
+                }
             }
         }
 

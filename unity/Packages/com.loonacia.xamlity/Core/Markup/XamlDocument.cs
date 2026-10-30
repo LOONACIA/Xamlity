@@ -11,6 +11,7 @@ namespace Xamlity.Markup
     {
         public string TypeName { get; set; }
         public string Name { get; set; }
+        public string Key { get; set; }
         public int Line { get; set; }
         public int Column { get; set; }
         public List<XamlPropertyNode> Properties { get; } = new List<XamlPropertyNode>();

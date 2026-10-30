@@ -178,7 +178,7 @@ namespace Xamlity.Core.Tests.Markup
         [TestCase("Canvas.=\"1\"", "Invalid property name 'Canvas.'; expected 'Owner.Property'.")]
         [TestCase("Canvas.Left=\"wrong\"", "Property 'Left': 'wrong' is not a valid Double value.")]
         [TestCase("x:Class=\"View\"", "XAML directive 'x:Class' is not supported.")]
-        [TestCase("x:Key=\"key\"", "XAML directive 'x:Key' is not supported.")]
+        [TestCase("x:Key=\"key\"", "x:Key is only valid on resource dictionary entries.")]
         [TestCase("x:Type=\"Border\"", "XAML directive 'x:Type' is not supported.")]
         [TestCase("x:DataType=\"View\"", "Unknown element 'View'.")]
         [TestCase("Unknown=\"1\"", "Unknown or read-only property 'Unknown' on type 'Border'.")]
@@ -205,7 +205,6 @@ namespace Xamlity.Core.Tests.Markup
 
         [TestCase("<Border.Child />", "Property 'Child' requires exactly one object.")]
         [TestCase("<x:Type />", "XAML directive 'x:Type' is not supported.")]
-        [TestCase("<Border.Resources />", "Unknown or read-only property 'Resources' on type 'Border'.")]
         public void RejectsUnsupportedElementSyntax(string child, string message)
         {
             AssertError(XamlParser.Parse("<Border " + Namespaces + ">\n  " + child + "\n</Border>", "view.xaml"),
@@ -338,7 +337,7 @@ namespace Xamlity.Core.Tests.Markup
         public void RejectsNonElementRootAndNameOnNonFrameworkElement()
         {
             AssertError(XamlParser.Parse("\n<SolidColorBrush " + Namespaces + " />", "view.xaml"),
-                2, 2, "Root element 'SolidColorBrush' must be a UIElement.");
+                2, 2, "Root element 'SolidColorBrush' must be a UIElement or ResourceDictionary.");
             AssertError(XamlParser.Parse("<Border " + Namespaces + ">\n  <Border.Background>\n" +
                 "    <SolidColorBrush\n      x:Name=\"brush\" />\n  </Border.Background>\n</Border>", "view.xaml"),
                 4, 7, "x:Name is only supported on FrameworkElement types, not 'SolidColorBrush'.");

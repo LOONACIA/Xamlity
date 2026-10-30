@@ -40,19 +40,23 @@ Core 내부는 다음 영역으로 나눈다. 폴더 이름은 네임스페이�
 | `Controls` | Border, TextBlock, Image, ContentPresenter, UserControl, ContentControl, Button, ItemsControl, ScrollViewer |
 | `Rendering` | `IDrawingContext`(사각형, 둥근 사각형, 이미지/9-slice, 글리프 런, 클립 push/pop, 불투명도 push/pop), `ITextMeasurer`, 이미지·폰트 핸들 추상 |
 
-`Markup`의 IR 직렬화 형식은 UTF-8 `BinaryWriter`/`BinaryReader` 기반이다. 헤더는 ASCII `XAIR` 4바이트와 little-endian int32 버전 `2`이다. 이어서 루트 객체를 재귀적으로 저장한다.
+`Markup`의 IR 직렬화 형식은 UTF-8 `BinaryWriter`/`BinaryReader` 기반이다. 헤더는 ASCII `XAIR` 4바이트와 little-endian int32 버전 `3`이다. 이어서 루트 객체를 재귀적으로 저장한다.
 
-- 객체: `TypeName`, `Name`, `Line`, `Column`, 프로퍼티 개수, 문서 순서의 프로퍼티들.
+- 객체: `TypeName`, `Name`, `Key`, `Line`, `Column`, 프로퍼티 개수, 문서 순서의 프로퍼티들.
 - 프로퍼티: `PropertyName`, `OwnerTypeName`, `Line`, `Column`, `TextValue`, 자식 객체 개수, 문서 순서의 자식 객체들. `OwnerTypeName`은 첨부 프로퍼티의 소유 타입을 `"<CLR 전체 이름>, <어셈블리 이름>"`으로 저장하고 일반 프로퍼티는 null이다.
 - 줄·열·개수는 int32이고, 문자열은 존재 여부 bool 1바이트 뒤에 값이 있으면 `BinaryWriter.Write(string)`의 7비트 가변 길이 바이트 수와 UTF-8 데이터를 쓴다(null과 빈 문자열 구분).
 
 `{Binding ...}` 속성은 `TextValue`가 null인 프로퍼티 노드와 그 `Objects`의 `Xamlity.Data.Binding` 객체 하나로 표현한다. 위치 인자는 `Path` 프로퍼티로 저장하며, 확장에서 생성한 모든 노드의 줄·열은 원래 속성 위치다. `<TextBlock.Text><Binding ... /></TextBlock.Text>`도 같은 구조이며 각 노드의 실제 XML 위치를 보존한다. 빌더는 Binding 객체 값을 `BindingOperations.SetBinding`으로 연결한다. 대상은 FrameworkElement의 DP(첨부 DP 포함)여야 하며 암시적 content 자식과 컬렉션 항목에는 Binding을 넣을 수 없다.
 
-`{}`로 시작하는 속성 값은 마크업 확장이 아닌 리터럴이다. IR의 `TextValue`에는 접두사를 포함한 원문을 보존하고, 파서 검증과 런타임 빌더가 공통으로 쓰는 `XamlValueConverter`에서 접두사만 제거한다. 확장 인자의 인용과 역슬래시 이스케이프는 파싱 중 해제하며, 해제된 값이 `{`로 시작하면 리터럴로 변환되도록 `{}` 접두사를 붙여 저장한다. 이 표현은 기존 IR v2 필드만 사용한다.
+`{StaticResource Key}`와 `{StaticResource ResourceKey=Key}`도 `TextValue`가 null인 프로퍼티 노드와 확장 객체 하나로 표현한다. 객체 타입은 `Xamlity.Markup.StaticResourceExtension`이고, `ResourceKey` 문자열 프로퍼티 하나를 가지며 모든 노드의 줄·열은 속성 위치다. 키의 존재 여부는 파서가 검사하지 않는다. 빌더는 생성 중인 객체를 안쪽부터 바깥쪽으로 순회하여 FrameworkElement.Resources 또는 ResourceDictionary의 이미 추가된 항목과 병합 사전을 조회한다. 항목은 생성 완료 후 추가하므로 자기 자신과 뒤쪽 리소스는 보이지 않는다. 중첩 확장과 앱·테마 대체 조회는 아직 지원하지 않는다.
 
-`System.Type` 프로퍼티의 속성 값은 XAML 타입 이름 또는 `{x:Type ...}`으로 받는다. 접두사 매핑은 IR에 남지 않으므로 파서가 요소 이름과 같은 규칙(생성자 불필요)으로 해석하여 `TextValue`에 `"<CLR 전체 이름>, <어셈블리 이름>"`으로 정규화한다. 빌더는 `Type.GetType`으로 복원하며 IR 버전은 2를 유지한다. Style의 content property는 Setters다. Setter.Property는 입력 이름을 그대로 저장하고, 파서와 빌더가 공통 해석 함수로 둘러싼 Style.TargetType 또는 기본 xmlns의 명시적 Owner에서 DP를 찾는다. Setter.Value의 텍스트 변환과 객체 할당 검증에는 해당 DP의 타입을 사용한다.
+객체의 `Key`는 사전 항목의 `x:Key` 문자열이며 null·빈 문자열을 구분한다. 키 없는 Style의 키는 TargetType이다. TargetType이나 Setter.Property가 StaticResource이면 관련 키·Setter 값의 타입 검증은 빌드 시점에 수행한다. ResourceDictionary 객체의 자식 항목은 내부용 `Entries` 프로퍼티 노드로 문서 순서대로 저장한다(공개 CLR 프로퍼티가 아님). MergedDictionaries 프로퍼티 사이에서도 순서를 보존한다. Resources 프로퍼티는 키 없는 ResourceDictionary 객체 하나면 사전 대입이며, 그 밖에는 자식들을 기존 사전에 추가한다. 암시적 컬렉션 자식 사이에 Resources 등 프로퍼티 요소가 있으면 컬렉션 프로퍼티 노드를 나누어 빌드 순서를 보존한다.
 
-Type 값 외의 값은 파서가 보존한 원문 문자열이며 런타임 빌더가 변환한다. 필드 추가·삭제·순서·인코딩 또는 값 해석의 호환성이 바뀌면 포맷 버전을 올리고 IR을 재임포트한다. 다른 매직·버전(v1 포함)이나 잘린 데이터는 `InvalidDataException`으로 거부한다. XAML 임포터 버전은 4이며, IR v2를 유지하면서 바인딩·clr-namespace·x:DataType 때문에 오류로 임포트된 기존 에셋도 새 규칙으로 다시 임포트한다.
+`{}`로 시작하는 속성 값은 마크업 확장이 아닌 리터럴이다. IR의 `TextValue`에는 접두사를 포함한 원문을 보존하고, 파서 검증과 런타임 빌더가 공통으로 쓰는 `XamlValueConverter`에서 접두사만 제거한다. 확장 인자의 인용과 역슬래시 이스케이프는 파싱 중 해제하며, 해제된 값이 `{`로 시작하면 리터럴로 변환되도록 `{}` 접두사를 붙여 저장한다. 이 표현은 IR v3에서도 같은 문자열 인코딩을 사용한다.
+
+`System.Type` 프로퍼티의 속성 값은 XAML 타입 이름 또는 `{x:Type ...}`으로 받는다. 접두사 매핑은 IR에 남지 않으므로 파서가 요소 이름과 같은 규칙(생성자 불필요)으로 해석하여 `TextValue`에 `"<CLR 전체 이름>, <어셈블리 이름>"`으로 정규화한다. 빌더는 `Type.GetType`으로 복원한다. Style의 content property는 Setters다. Setter.Property는 입력 이름을 그대로 저장하고, 파서와 빌더가 공통 해석 함수로 둘러싼 Style.TargetType 또는 기본 xmlns의 명시적 Owner에서 DP를 찾는다. Setter.Value의 텍스트 변환과 객체 할당 검증에는 해당 DP의 타입을 사용한다.
+
+Type 값 외의 값은 파서가 보존한 원문 문자열이며 런타임 빌더가 변환한다. 필드 추가·삭제·순서·인코딩 또는 값 해석의 호환성이 바뀌면 포맷 버전을 올리고 IR을 재임포트한다. 다른 매직·버전(v1·v2 포함)이나 잘린 데이터는 `InvalidDataException`으로 거부한다. XAML 임포터 버전은 5이며, 기존 v2 IR 에셋을 다시 임포트하여 런타임이 v3 형식으로 읽을 수 있게 한다.
 
 ## 레이어 규칙
 - 의존 방향은 `Xamlity.Editor → Xamlity.Unity → Xamlity.Core` 한 방향이다. Core는 다른 어셈블리를 모른다. 이유: Core를 Unity 없이 `dotnet test`로 검증하고, 다른 엔진으로 옮길 가능성을 열어 둔다.

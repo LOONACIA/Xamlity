@@ -47,7 +47,7 @@ namespace Xamlity.Core.Tests.Markup
         }
 
         [Test]
-        public void SerializationUsesVersionTwoFieldLayout()
+        public void SerializationUsesVersionThreeFieldLayout()
         {
             var document = new XamlDocument
             {
@@ -59,8 +59,8 @@ namespace Xamlity.Core.Tests.Markup
             });
             byte[] expected =
             {
-                88, 65, 73, 82, 2, 0, 0, 0, // XAIR, version 2
-                1, 1, 84, 1, 0, // TypeName, empty Name
+                88, 65, 73, 82, 3, 0, 0, 0, // XAIR, version 3
+                1, 1, 84, 1, 0, 0, // TypeName, empty Name, null Key
                 2, 0, 0, 0, 3, 0, 0, 0, 1, 0, 0, 0, // Line, Column, property count
                 1, 1, 80, 0, 4, 0, 0, 0, 5, 0, 0, 0, // PropertyName, null OwnerTypeName, Line, Column
                 1, 3, 0xED, 0x95, 0x9C, 0, 0, 0, 0 // TextValue, object count
@@ -136,12 +136,12 @@ namespace Xamlity.Core.Tests.Markup
             data[0] = (byte)'Y';
             var exception = Assert.Throws<InvalidDataException>(() => XamlIrSerializer.Deserialize(data));
             Assert.That(exception.Message, Does.Contain("magic").And.Contain("XAIR")
-                .And.Contain("Expected version 2").And.Contain("actual version 2"));
+                .And.Contain("Expected version 3").And.Contain("actual version 3"));
         }
 
         [TestCase(0)]
         [TestCase(1)]
-        [TestCase(3)]
+        [TestCase(2)]
         [TestCase(-1)]
         public void RejectsWrongVersion(int version)
         {
@@ -152,7 +152,7 @@ namespace Xamlity.Core.Tests.Markup
                 writer.Write(version);
             }
             var exception = Assert.Throws<InvalidDataException>(() => XamlIrSerializer.Deserialize(data));
-            Assert.That(exception.Message, Does.Contain("Expected version 2").And.Contain("actual version " + version));
+            Assert.That(exception.Message, Does.Contain("Expected version 3").And.Contain("actual version " + version));
         }
 
         [Test]
@@ -164,8 +164,8 @@ namespace Xamlity.Core.Tests.Markup
                 byte[] truncated = data.Take(length).ToArray();
                 var exception = Assert.Throws<InvalidDataException>(() => XamlIrSerializer.Deserialize(truncated),
                     "Truncated at byte " + length);
-                Assert.That(exception.Message, Does.Contain("Expected version 2")
-                    .And.Contain(length < 8 ? "actual version unavailable" : "actual version 2"));
+                Assert.That(exception.Message, Does.Contain("Expected version 3")
+                    .And.Contain(length < 8 ? "actual version unavailable" : "actual version 3"));
             }
         }
 
@@ -419,6 +419,7 @@ namespace Xamlity.Core.Tests.Markup
         {
             Assert.That(actual.TypeName, Is.EqualTo(expected.TypeName));
             Assert.That(actual.Name, Is.EqualTo(expected.Name));
+            Assert.That(actual.Key, Is.EqualTo(expected.Key));
             Assert.That(actual.Line, Is.EqualTo(expected.Line));
             Assert.That(actual.Column, Is.EqualTo(expected.Column));
             Assert.That(actual.Properties.Count, Is.EqualTo(expected.Properties.Count));

@@ -11,7 +11,7 @@ using Object = UnityEngine.Object;
 
 namespace Xamlity.Editor
 {
-    [ScriptedImporter(4, "xaml")]
+    [ScriptedImporter(5, "xaml")]
     public sealed class XamlImporter : ScriptedImporter
     {
         public override void OnImportAsset(AssetImportContext ctx)

@@ -14,6 +14,13 @@ namespace Xamlity.Tree
                 (d, e) => ((FrameworkElement)d).ApplyStyle((Style)e.NewValue)));
 
         private Style appliedStyle;
+        private ResourceDictionary resources;
+
+        public ResourceDictionary Resources
+        {
+            get => resources ?? (resources = new ResourceDictionary());
+            set => resources = value;
+        }
 
         public Style Style
         {

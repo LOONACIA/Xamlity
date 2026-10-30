@@ -230,7 +230,6 @@ namespace Xamlity.Core.Tests.Markup
             Assert.That(image.Source, Is.SameAs(resolver.Source));
         }
 
-        [TestCase("{StaticResource c}", "Markup extension 'StaticResource' is not supported.")]
         [TestCase("{TemplateBinding Text}", "Markup extension 'TemplateBinding' is not supported.")]
         [TestCase("{x:Type TextBlock}", "Markup extension 'x:Type' can only be used for Type values.")]
         [TestCase("{x:Static Something}", "Markup extension 'x:Static' is not supported.")]

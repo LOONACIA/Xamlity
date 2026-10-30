@@ -163,7 +163,7 @@ namespace Xamlity.Core.Tests.Markup
         public void RootMustStillBeAUiElement()
         {
             AssertError("\n<t:UpperCaseConverter " + Namespaces + "/>",
-                "Root element 'UpperCaseConverter' must be a UIElement.", 2, 2);
+                "Root element 'UpperCaseConverter' must be a UIElement or ResourceDictionary.", 2, 2);
         }
 
         [Test]
