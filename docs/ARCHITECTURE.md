@@ -56,6 +56,8 @@ Core 내부는 다음 영역으로 나눈다. 폴더 이름은 네임스페이�
 
 객체의 `Key`는 사전 항목의 `x:Key` 문자열이며 null·빈 문자열을 구분한다. 키 없는 Style의 키는 TargetType이다. TargetType이나 Setter.Property가 StaticResource이면 관련 키·Setter 값의 타입 검증은 빌드 시점에 수행한다. ResourceDictionary 객체의 자식 항목은 내부용 `Entries` 프로퍼티 노드로 문서 순서대로 저장한다(공개 CLR 프로퍼티가 아님). MergedDictionaries 프로퍼티 사이에서도 순서를 보존한다. Resources 프로퍼티는 키 없는 ResourceDictionary 객체 하나면 사전 대입이며, 그 밖에는 자식들을 기존 사전에 추가한다. 암시적 컬렉션 자식 사이에 Resources 등 프로퍼티 요소가 있으면 컬렉션 프로퍼티 노드를 나누어 빌드 순서를 보존한다.
 
+`ResourceDictionary.Source`는 `Source` 프로퍼티 노드의 `TextValue`에 경로 원문을 저장한다. 파서의 에셋 참조 목록은 Image와 ResourceDictionary 종류를 구분한다. 빌더는 해석기가 반환한 사전의 항목과 MergedDictionaries를 복사하고 Source URI를 기록한다. Source와 인라인 자식 항목은 함께 쓸 수 없으며 Source의 공개 setter는 제공하지 않는다.
+
 `{}`로 시작하는 속성 값은 마크업 확장이 아닌 리터럴이다. IR의 `TextValue`에는 접두사를 포함한 원문을 보존하고, 파서 검증과 런타임 빌더가 공통으로 쓰는 `XamlValueConverter`에서 접두사만 제거한다. 확장 인자의 인용과 역슬래시 이스케이프는 파싱 중 해제하며, 해제된 값이 `{`로 시작하면 리터럴로 변환되도록 `{}` 접두사를 붙여 저장한다. 이 표현은 IR v3에서도 같은 문자열 인코딩을 사용한다.
 
 `System.Type` 프로퍼티의 속성 값은 XAML 타입 이름 또는 `{x:Type ...}`으로 받는다. 접두사 매핑은 IR에 남지 않으므로 파서가 요소 이름과 같은 규칙(생성자 불필요)으로 해석하여 `TextValue`에 `"<CLR 전체 이름>, <어셈블리 이름>"`으로 정규화한다. 빌더는 `Type.GetType`으로 복원한다. Style의 content property는 Setters다. Setter.Property는 입력 이름을 그대로 저장하고, 파서와 빌더가 공통 해석 함수로 둘러싼 Style.TargetType 또는 기본 xmlns의 명시적 Owner에서 DP를 찾는다. Setter.Value의 텍스트 변환과 객체 할당 검증에는 해당 DP의 타입을 사용한다.
@@ -68,7 +70,7 @@ ControlTemplate의 자식은 내부용 `TemplateContent` 프로퍼티 노드의 
 
 빌더는 ControlTemplate 내용을 즉시 생성하지 않고 IR 노드, 정의 위치에서 빌드 중이던 객체·사전의 참조, 에셋 해석기를 보관한다. ApplyTemplate마다 새 트리와 이름 범위를 만들고, StaticResource는 그때 빌드 중인 템플릿 요소 → 정의 위치의 렉시컬 범위 → 해당 빌드의 앱 → 테마 사전 순으로 찾는다. 조회 실패는 원래 IR 노드의 줄·열을 가진 XamlBuildException으로 적용 시점에 보고한다. 템플릿이 만든 요소의 TemplatedParent는 적용 대상 Control이며, XAML의 DP 값(Style 포함)은 ParentTemplate 층에 넣는다. 템플릿 안 Binding만 기존 로컬 식으로 유지하는 것은 이 구현의 의도적인 단순화다.
 
-Type 값 외의 값은 파서가 보존한 원문 문자열이며 런타임 빌더가 변환한다. 필드 추가·삭제·순서·인코딩 또는 값 해석의 호환성이 바뀌면 포맷 버전을 올리고 IR을 재임포트한다. 다른 매직·버전(v1·v2 포함)이나 잘린 데이터는 `InvalidDataException`으로 거부한다. XAML 임포터 버전은 5이며, 기존 v2 IR 에셋을 다시 임포트하여 런타임이 v3 형식으로 읽을 수 있게 한다.
+Type 값 외의 값은 파서가 보존한 원문 문자열이며 런타임 빌더가 변환한다. 필드 추가·삭제·순서·인코딩 또는 값 해석의 호환성이 바뀌면 포맷 버전을 올리고 IR을 재임포트한다. 다른 매직·버전(v1·v2 포함)이나 잘린 데이터는 `InvalidDataException`으로 거부한다. XAML 임포터 버전은 6이며, Source 의존성과 XamlAsset 참조 테이블을 다시 생성한다. IR은 기존 v3 형식을 유지한다.
 
 ## 레이어 규칙
 - 의존 방향은 `Xamlity.Editor → Xamlity.Unity → Xamlity.Core` 한 방향이다. Core는 다른 어셈블리를 모른다. 이유: Core를 Unity 없이 `dotnet test`로 검증하고, 다른 엔진으로 옮길 가능성을 열어 둔다.
@@ -92,7 +94,9 @@ Type 값 외의 값은 파서가 보존한 원문 문자열이며 런타임 빌�
       이미지 경로마다 존재하면 artifact 의존성, 없으면 소스 의존성 등록
       참조한 어셈블리마다 Xamlity/Assembly/<어셈블리 이름> 커스텀 의존성 연결 (파싱 오류 시에도 연결)
       도메인 리로드 뒤 지연 콜백에서 스크립트 어셈블리 출력 DLL 내용의 Hash128을 등록하고 Refresh 예약
-      다른 XAML(MergedDictionaries 등)은 소스 의존성 등록
+      ResourceDictionary.Source는 기존 XAML이면 artifact 의존성, 없으면 소스 의존성 등록
+      GatherDependenciesFromSourceFile에서 Source의 기존 XAML 의존성을 미리 알려 임포트 순서 결정
+      Source 대상은 오류 없는 ResourceDictionary 루트의 XamlAsset이어야 하며 참조 테이블에 저장
       오류 → ctx에 "파일(줄,열): 메시지"
   → XamlAsset (IR 바이트 + Object 참조 테이블)
   → OnPostprocessAllAssets: x:Class가 있으면 View.xaml.g.cs 생성 (내용이 바뀔 때만 씀)
@@ -106,6 +110,7 @@ XamlityRoot.Awake
   → 뷰 XamlAsset → 앱·테마 사전과 참조 테이블의 UnityImageSource 해석기를 주입한 Core 빌더 → 요소 트리
      (x:Class면 그 타입을 생성하고 InitializeComponent 호출)
   → UIRoot에 앱·테마 사전과 기본 폰트 전달 (사전은 Build마다 새로 생성하며 캐시하지 않음)
+  → ResourceDictionary.Source는 같은 앱·테마 대체 사전으로 참조 XamlAsset 빌드 (진행 중인 에셋 집합으로 순환 감지)
   → 암시적 Style(요소 → 시각 부모 → 앱), 테마 스타일(DefaultStyleKey로 테마 사전), StaticResource(빌드 시 렉시컬 → 앱 → 테마)
   → 코드에서 DataContext 설정 → 바인딩 연결
 

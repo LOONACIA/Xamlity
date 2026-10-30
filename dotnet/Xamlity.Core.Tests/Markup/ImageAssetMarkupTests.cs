@@ -103,6 +103,8 @@ namespace Xamlity.Core.Tests.Markup
 
         private sealed class Resolver : IXamlAssetResolver
         {
+            public Xamlity.Styling.ResourceDictionary ResolveResourceDictionary(string value) => null;
+
             internal readonly List<string> Values = new List<string>();
             internal ImageSource Source = new TestImageSource();
 
@@ -115,6 +117,8 @@ namespace Xamlity.Core.Tests.Markup
 
         private sealed class FailingResolver : IXamlAssetResolver
         {
+            public Xamlity.Styling.ResourceDictionary ResolveResourceDictionary(string value) => null;
+
             public ImageSource ResolveImage(string value) => throw new InvalidOperationException("Resolution failed.");
         }
 

@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using Xamlity.Controls;
@@ -60,6 +61,32 @@ namespace Xamlity.Markup
                 if (type == typeof(Setter))
                     return BuildSetter(node, style?.TargetType, assetResolver, scope);
                 object instance = Activator.CreateInstance(type);
+                if (instance is ResourceDictionary dictionary)
+                {
+                    XamlPropertyNode source = node.Properties.Find(property => property.PropertyName == nameof(ResourceDictionary.Source));
+                    if (source != null)
+                    {
+                        try
+                        {
+                            XamlValueConverter.TryConvert(source.TextValue, typeof(string), null, out object path, out _);
+                            ResourceDictionary resolved = assetResolver?.ResolveResourceDictionary((string)path);
+                            if (resolved == null)
+                                throw new InvalidOperationException($"Resource dictionary '{path}' could not be resolved.");
+                            dictionary.Source = new Uri((string)path, UriKind.RelativeOrAbsolute);
+                            dictionary.Clear();
+                            dictionary.MergedDictionaries.Clear();
+                            foreach (DictionaryEntry entry in resolved)
+                                dictionary.Add(entry.Key, entry.Value);
+                            foreach (ResourceDictionary merged in resolved.MergedDictionaries)
+                                dictionary.MergedDictionaries.Add(merged);
+                        }
+                        catch (XamlBuildException) { throw; }
+                        catch (Exception exception)
+                        {
+                            throw new XamlBuildException(node.Line, node.Column, exception.Message, exception);
+                        }
+                    }
+                }
                 scope.Add(instance);
                 try
                 {
@@ -72,9 +99,13 @@ namespace Xamlity.Markup
                             if (property.PropertyName == nameof(Style.TargetType))
                                 ApplyProperty(instance, type, property, assetResolver, scope);
                     foreach (XamlPropertyNode property in node.Properties)
+                    {
+                        if (instance is ResourceDictionary && property.PropertyName == nameof(ResourceDictionary.Source))
+                            continue;
                         if ((!(instance is Style) && !(instance is ControlTemplate)) ||
                             (property.PropertyName != nameof(Style.TargetType) && property.PropertyName != nameof(Style.Triggers)))
                             ApplyProperty(instance, type, property, assetResolver, scope);
+                    }
                     if (instance is Style || instance is ControlTemplate)
                     {
                         Type target = instance is Style ownerStyle ? ownerStyle.TargetType :

@@ -224,6 +224,11 @@ namespace Xamlity.Markup
                 reader.Read();
                 if (type == typeof(Binding))
                     ValidateBindingPath(node, dataType);
+                if (isDictionary && assigned.Contains(nameof(ResourceDictionary.Source)) &&
+                    node.Properties.Exists(property => (property.PropertyName == "Entries" ||
+                        property.PropertyName == nameof(ResourceDictionary.MergedDictionaries)) && property.Objects.Count != 0))
+                    errors.Add(new XamlError(fileName, node.Line, node.Column,
+                        "A ResourceDictionary with Source cannot have entries."));
                 ValidateStyleAndSetter(type, node, assigned, styleTargetType, styleOwnerType);
                 if (isStyle || isTemplate)
                     ValidateTriggers(node, isTemplate);
@@ -656,7 +661,23 @@ namespace Xamlity.Markup
                     }
                     var property = new XamlPropertyNode { PropertyName = name, OwnerTypeName = ownerTypeName,
                         Line = location.LineNumber, Column = location.LinePosition };
-                    if ((type == typeof(Setter) || type == typeof(Trigger)) && name == nameof(Setter.Property) && !IsMarkupExtension(reader.Value))
+                    if (attachedOwner == null && typeof(ResourceDictionary).IsAssignableFrom(type) &&
+                        name == nameof(ResourceDictionary.Source))
+                    {
+                        property.TextValue = reader.Value;
+                        if (IsMarkupExtension(reader.Value))
+                            Error("ResourceDictionary.Source does not support markup extensions.");
+                        else
+                        {
+                            XamlValueConverter.TryConvert(reader.Value, typeof(string), null, out object path, out _);
+                            if (string.IsNullOrWhiteSpace((string)path))
+                                Error("Resource dictionary paths must not be empty.");
+                            else
+                                assetReferences.Add(new XamlAssetReference((string)path, property.Line, property.Column,
+                                    XamlAssetReferenceKind.ResourceDictionary));
+                        }
+                    }
+                    else if ((type == typeof(Setter) || type == typeof(Trigger)) && name == nameof(Setter.Property) && !IsMarkupExtension(reader.Value))
                         property.TextValue = reader.Value;
                     else if (type == typeof(Setter) && name == nameof(Setter.Value))
                     {

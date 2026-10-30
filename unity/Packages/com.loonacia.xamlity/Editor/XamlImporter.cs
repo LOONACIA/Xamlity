@@ -11,9 +11,22 @@ using Object = UnityEngine.Object;
 
 namespace Xamlity.Editor
 {
-    [ScriptedImporter(5, "xaml")]
+    [ScriptedImporter(6, "xaml")]
     public sealed class XamlImporter : ScriptedImporter
     {
+        private static string[] GatherDependenciesFromSourceFile(string path)
+        {
+            XamlParseResult result = XamlParser.Parse(File.ReadAllText(path, Encoding.UTF8), path);
+            var dependencies = new List<string>();
+            foreach (XamlAssetReference reference in result.AssetReferences)
+                if (reference.Kind == XamlAssetReferenceKind.ResourceDictionary &&
+                    TryResolveImagePath(path, reference.Value, out string dependency, out _) &&
+                    Path.GetExtension(dependency).Equals(".xaml", StringComparison.OrdinalIgnoreCase) &&
+                    File.Exists(dependency))
+                    dependencies.Add(dependency);
+            return dependencies.ToArray();
+        }
+
         public override void OnImportAsset(AssetImportContext ctx)
         {
             string text = File.ReadAllText(ctx.assetPath, Encoding.UTF8);
@@ -29,6 +42,21 @@ namespace Xamlity.Editor
                 bool hasErrors = false;
                 foreach (XamlAssetReference reference in result.AssetReferences)
                 {
+                    if (reference.Kind == XamlAssetReferenceKind.ResourceDictionary)
+                    {
+                        if (!TryResolveResourceDictionary(ctx, reference.Value, out XamlAsset dictionary, out string dictionaryError))
+                        {
+                            ctx.LogImportError(new XamlError(ctx.assetPath, reference.Line, reference.Column,
+                                $"Resource dictionary '{reference.Value}': {dictionaryError}").ToString());
+                            hasErrors = true;
+                        }
+                        else if (!keys.Contains(reference.Value))
+                        {
+                            keys.Add(reference.Value);
+                            assets.Add(dictionary);
+                        }
+                        continue;
+                    }
                     if (!TryResolveImagePath(ctx.assetPath, reference.Value, out string path, out string error))
                     {
                         ctx.LogImportError(new XamlError(ctx.assetPath, reference.Line, reference.Column, error).ToString());
@@ -63,6 +91,40 @@ namespace Xamlity.Editor
             }
             ctx.AddObjectToAsset("XamlAsset", asset);
             ctx.SetMainObject(asset);
+        }
+
+        private static bool TryResolveResourceDictionary(AssetImportContext ctx, string value,
+            out XamlAsset dictionary, out string error)
+        {
+            dictionary = null;
+            if (!TryResolveImagePath(ctx.assetPath, value, out string path, out _))
+            {
+                error = "Invalid asset path; use a project path or a relative path with '/' separators.";
+                return false;
+            }
+            bool exists = File.Exists(path);
+            if (exists)
+                ctx.DependsOnArtifact(path);
+            else
+                ctx.DependsOnSourceAsset(path);
+            if (!Path.GetExtension(path).Equals(".xaml", StringComparison.OrdinalIgnoreCase))
+                error = "Asset must be a .xaml file.";
+            else if (!exists)
+                error = "Asset was not found.";
+            else
+            {
+                dictionary = ctx.GetReferenceToAssetMainObject(path) as XamlAsset;
+                if (dictionary == null || !dictionary.HasIr)
+                    error = "XAML asset has import errors.";
+                else if (!dictionary.HasResourceDictionaryRoot)
+                    error = "XAML asset must have a ResourceDictionary root.";
+                else
+                {
+                    error = null;
+                    return true;
+                }
+            }
+            return false;
         }
 
         internal static bool TrySelectImageAsset(Object[] assets, Object mainAsset,

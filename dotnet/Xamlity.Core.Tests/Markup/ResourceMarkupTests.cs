@@ -337,6 +337,137 @@ namespace Xamlity.Core.Tests.Markup
             Assert.That(error.Message, Is.EqualTo("(2,3): Resource '" + key + "' was not found."));
         }
 
+
+        [Test]
+        public void SourcePreservesIrPathLocationAndDistinctReferenceKinds()
+        {
+            XamlParseResult result = XamlParser.Parse("<Border " + Namespaces + "><Border.Resources>" +
+                "<ResourceDictionary\n  Source=\"./Themes/../한글.xaml\"/></Border.Resources>" +
+                "<Image Source=\"icon.png\"/></Border>", "resources.xaml");
+            Assert.That(result.Errors, Is.Empty);
+            Assert.That(result.AssetReferences.Select(reference => reference.Kind), Is.EqualTo(new[] {
+                XamlAssetReferenceKind.ResourceDictionary, XamlAssetReferenceKind.Image }));
+            XamlAssetReference reference = result.AssetReferences[0];
+            Assert.That((reference.Value, reference.Line, reference.Column), Is.EqualTo(("./Themes/../한글.xaml", 2, 3)));
+            var document = XamlIrSerializer.Deserialize(XamlIrSerializer.Serialize(result.Document));
+            XamlPropertyNode source = document.Root.Properties[0].Objects[0].Properties.Single();
+            Assert.That((source.PropertyName, source.TextValue, source.Line, source.Column),
+                Is.EqualTo(("Source", reference.Value, 2, 3)));
+            Assert.That(source.Objects, Is.Empty);
+        }
+
+        [TestCase("<ResourceDictionary {0} Source=\"B.xaml\"/>")]
+        [TestCase("<t:SeedResources {0} Source=\"B.xaml\"/>")]
+        [TestCase("<Border {0}><Border.Resources><ResourceDictionary Source=\"B.xaml\"/></Border.Resources></Border>")]
+        [TestCase("<ResourceDictionary {0}><ResourceDictionary x:Key=\"nested\" Source=\"B.xaml\"/></ResourceDictionary>")]
+        [TestCase("<ResourceDictionary {0}><ResourceDictionary.MergedDictionaries><ResourceDictionary Source=\"B.xaml\"/>" +
+            "</ResourceDictionary.MergedDictionaries></ResourceDictionary>")]
+        public void SourceCopiesEntriesAndMergedDictionariesAtAnyPosition(string xaml)
+        {
+            var brush = new SolidColorBrush(Color.FromRgb(1, 2, 3));
+            var resolved = new ResourceDictionary { ["local"] = brush };
+            resolved.MergedDictionaries.Add(new ResourceDictionary { ["merged"] = brush });
+            var resolver = new DictionaryResolver { Dictionary = resolved };
+            XamlParseResult result = XamlParser.Parse(string.Format(xaml, Namespaces), "resources.xaml");
+            Assert.That(result.Errors, Is.Empty, string.Join("\n", result.Errors));
+            object built = XamlBuilder.Build(XamlIrSerializer.Deserialize(XamlIrSerializer.Serialize(result.Document)), resolver);
+            var dictionary = built is Border border ? border.Resources : (ResourceDictionary)built;
+            if (dictionary.Contains("nested"))
+                dictionary = (ResourceDictionary)dictionary["nested"];
+            else if (dictionary.Source == null)
+                dictionary = dictionary.MergedDictionaries.Single();
+            Assert.That(dictionary.Source, Is.EqualTo(new Uri("B.xaml", UriKind.Relative)));
+            Assert.That(dictionary.Count, Is.EqualTo(1));
+            Assert.That(dictionary["local"], Is.SameAs(brush));
+            Assert.That(dictionary["merged"], Is.SameAs(brush));
+            Assert.That(dictionary.MergedDictionaries.Single(), Is.SameAs(resolved.MergedDictionaries[0]));
+            Assert.That(resolver.Value, Is.EqualTo("B.xaml"));
+            Assert.That(resolved.Source, Is.Null);
+        }
+
+        [Test]
+        public void SourceDoesNotIgnoreOtherDictionaryAttributes()
+        {
+            XamlParseResult result = XamlParser.Parse("<t:SeedResources " + Namespaces +
+                " Source=\"B.xaml\" Tag=\"kept\"/>", "resources.xaml");
+            Assert.That(result.Errors, Is.Empty);
+            var dictionary = (SeedResources)XamlBuilder.Build(result.Document,
+                new DictionaryResolver { Dictionary = new ResourceDictionary() });
+            Assert.That(dictionary.Tag, Is.EqualTo("kept"));
+            Assert.That(dictionary.Count, Is.Zero);
+        }
+
+        [Test]
+        public void StaticResourceFindsSourceMergedDictionary()
+        {
+            var brush = new SolidColorBrush(Color.FromRgb(1, 2, 3));
+            var resolver = new DictionaryResolver { Dictionary = new ResourceDictionary { ["brush"] = brush } };
+            XamlParseResult result = XamlParser.Parse("<Border " + Namespaces + "><Border.Resources><ResourceDictionary>" +
+                "<ResourceDictionary.MergedDictionaries><ResourceDictionary Source=\"B.xaml\"/>" +
+                "</ResourceDictionary.MergedDictionaries></ResourceDictionary></Border.Resources>" +
+                "<Border Background=\"{StaticResource brush}\"/></Border>", "resources.xaml");
+            Assert.That(result.Errors, Is.Empty);
+            var border = (Border)XamlBuilder.Build(result.Document, resolver);
+            Assert.That(((Border)border.Child).Background, Is.SameAs(brush));
+        }
+
+        [TestCase("<SolidColorBrush x:Key=\"brush\"/>")]
+        [TestCase("<ResourceDictionary.MergedDictionaries><ResourceDictionary/></ResourceDictionary.MergedDictionaries>")]
+        public void SourceRejectsInlineEntries(string content)
+        {
+            AssertError("\n<ResourceDictionary " + Namespaces + " Source=\"B.xaml\">" + content + "</ResourceDictionary>",
+                "A ResourceDictionary with Source cannot have entries.", 2, 2);
+        }
+
+        [TestCase("")]
+        [TestCase("   ")]
+        public void SourceRejectsEmptyPaths(string value)
+        {
+            AssertError("<ResourceDictionary " + Namespaces + "\n  Source=\"" + value + "\"/>",
+                "Resource dictionary paths must not be empty.", 2, 3);
+        }
+
+        [TestCase("{StaticResource path}")]
+        [TestCase("{Binding Path}")]
+        public void SourceRejectsUnsupportedExtensions(string value)
+        {
+            AssertError("<ResourceDictionary " + Namespaces + "\n  Source=\"" + value + "\"/>",
+                "ResourceDictionary.Source does not support markup extensions.", 2, 3);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void UnresolvedSourceReportsDictionaryNodeLocation(bool missingResolver)
+        {
+            XamlParseResult result = XamlParser.Parse("\n<ResourceDictionary " + Namespaces + "\n  Source=\"B.xaml\"/>", "resources.xaml");
+            Assert.That(result.Errors, Is.Empty);
+            var error = Assert.Throws<XamlBuildException>(() => XamlBuilder.Build(result.Document,
+                missingResolver ? null : new DictionaryResolver()));
+            Assert.That(error.Message, Is.EqualTo("(2,2): Resource dictionary 'B.xaml' could not be resolved."));
+            Assert.That((error.Line, error.Column), Is.EqualTo((2, 2)));
+        }
+
+        [Test]
+        public void SourceCannotBeSetByRuntimeConsumers()
+        {
+            var property = typeof(ResourceDictionary).GetProperty(nameof(ResourceDictionary.Source));
+            Assert.That(property.PropertyType, Is.EqualTo(typeof(Uri)));
+            Assert.That(property.GetMethod.IsPublic, Is.True);
+            Assert.That(property.SetMethod.IsAssembly, Is.True);
+        }
+
+        private sealed class DictionaryResolver : IXamlAssetResolver
+        {
+            internal ResourceDictionary Dictionary;
+            internal string Value;
+            public ImageSource ResolveImage(string value) => null;
+            public ResourceDictionary ResolveResourceDictionary(string value)
+            {
+                Value = value;
+                return Dictionary;
+            }
+        }
+
         private static XamlDocument Parse(string xaml)
         {
             XamlParseResult result = XamlParser.Parse(xaml, "resources.xaml");
@@ -360,6 +491,8 @@ namespace Xamlity.Core.Tests.Markup
 
     public class SeedResources : ResourceDictionary
     {
+        public string Tag { get; set; }
+
         public SeedResources()
         {
             Add("number", 12.5);

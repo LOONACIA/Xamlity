@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using Xamlity.Markup;
 using Xamlity.Rendering;
@@ -22,6 +23,8 @@ namespace Xamlity.Unity
         }
 
         internal bool HasIr => ir != null && ir.Length != 0;
+        internal bool HasResourceDictionaryRoot => HasIr && typeof(ResourceDictionary).IsAssignableFrom(
+            Type.GetType(XamlIrSerializer.Deserialize(ir).Root.TypeName, throwOnError: true));
 
         public UIElement Build() => Build(null, null);
 
@@ -37,19 +40,55 @@ namespace Xamlity.Unity
                 ?? throw new InvalidOperationException($"XAML asset '{name}' must have a ResourceDictionary root.");
         }
 
-        private object BuildObject(ResourceDictionary applicationResources, ResourceDictionary themeResources)
+        private object BuildObject(ResourceDictionary applicationResources, ResourceDictionary themeResources,
+            HashSet<XamlAsset> building = null)
         {
             if (!HasIr)
                 throw new InvalidOperationException($"XAML asset '{name}' has import errors.");
-            return XamlBuilder.Build(XamlIrSerializer.Deserialize(ir), new AssetResolver(this),
-                applicationResources, themeResources);
+            building = building ?? new HashSet<XamlAsset>();
+            building.Add(this);
+            try
+            {
+                return XamlBuilder.Build(XamlIrSerializer.Deserialize(ir),
+                    new AssetResolver(this, applicationResources, themeResources, building),
+                    applicationResources, themeResources);
+            }
+            finally
+            {
+                building.Remove(this);
+            }
         }
 
         private sealed class AssetResolver : IXamlAssetResolver
         {
             private readonly XamlAsset owner;
+            private readonly ResourceDictionary applicationResources;
+            private readonly ResourceDictionary themeResources;
+            private readonly HashSet<XamlAsset> building;
 
-            internal AssetResolver(XamlAsset owner) => this.owner = owner;
+            internal AssetResolver(XamlAsset owner, ResourceDictionary applicationResources,
+                ResourceDictionary themeResources, HashSet<XamlAsset> building)
+            {
+                this.owner = owner;
+                this.applicationResources = applicationResources;
+                this.themeResources = themeResources;
+                this.building = building;
+            }
+
+            public ResourceDictionary ResolveResourceDictionary(string value)
+            {
+                int index = owner.assetKeys == null ? -1 : Array.IndexOf(owner.assetKeys, value);
+                if (index < 0 || owner.assets == null || index >= owner.assets.Length ||
+                    !(owner.assets[index] is XamlAsset reference))
+                    return null;
+                // Refresh can unload a ScriptableObject while its serialized reference remains valid.
+                var asset = new LazyLoadReference<XamlAsset>(reference.GetEntityId()).asset;
+                if (asset == null)
+                    return null;
+                if (building.Contains(asset))
+                    throw new InvalidOperationException($"Resource dictionary '{value}' is part of a reference cycle.");
+                return asset.BuildObject(applicationResources, themeResources, building) as ResourceDictionary;
+            }
 
             public ImageSource ResolveImage(string value)
             {

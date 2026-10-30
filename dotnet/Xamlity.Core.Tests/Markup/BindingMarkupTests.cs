@@ -532,6 +532,8 @@ namespace Xamlity.Core.Tests.Markup
 
         private sealed class ImageResolver : IXamlAssetResolver
         {
+            public Xamlity.Styling.ResourceDictionary ResolveResourceDictionary(string value) => null;
+
             internal string Path;
             internal readonly ImageSource Source = new TestImageSource();
             public ImageSource ResolveImage(string value) { Path = value; return Source; }

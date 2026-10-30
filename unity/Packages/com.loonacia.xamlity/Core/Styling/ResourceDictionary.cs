@@ -8,6 +8,8 @@ namespace Xamlity.Styling
     {
         private readonly Hashtable entries = new Hashtable();
 
+        public Uri Source { get; internal set; }
+
         public Collection<ResourceDictionary> MergedDictionaries { get; } = new DictionaryCollection();
 
         public object this[object key]
