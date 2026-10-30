@@ -57,6 +57,7 @@ namespace Xamlity.Markup
                 ?? assembly.GetType("Xamlity.Layout." + name)
                 ?? assembly.GetType("Xamlity.Rendering." + name)
                 ?? assembly.GetType("Xamlity.Data." + name)
+                ?? assembly.GetType("Xamlity.Styling." + name)
                 ?? (requireConstructor ? null : assembly.GetType("Xamlity.Tree." + name));
             if (type != null && type.IsPublic && (!requireConstructor || CanCreate(type)))
                 return type;
@@ -126,6 +127,26 @@ namespace Xamlity.Markup
             for (Type current = type; current != null; current = current.BaseType)
                 RuntimeHelpers.RunClassConstructor(current.TypeHandle);
             return DependencyProperty.FromName(type, name);
+        }
+
+        internal static DependencyProperty ResolveSetterProperty(Type targetType, string name, out string error)
+        {
+            error = null;
+            if (name.Contains(":"))
+            {
+                error = "Setter.Property does not support prefixed owner types.";
+                return null;
+            }
+            int separator = name.IndexOf('.');
+            Type owner = separator < 0 ? targetType :
+                Resolve(DefaultNamespace, name.Substring(0, separator), requireConstructor: false);
+            DependencyProperty property = owner == null ? null :
+                ResolveDependencyProperty(owner, separator < 0 ? name : name.Substring(separator + 1));
+            if (property == null)
+                error = $"Cannot resolve the Style Property '{name}'. Verify that the owning type is the Style's TargetType, or use Class.Property syntax to specify the Property.";
+            else if (property == FrameworkElement.StyleProperty)
+                error = "Style object is not allowed to affect the Style property of the object to which it applies.";
+            return error == null ? property : null;
         }
 
         internal static Type GetCollectionInterface(Type type)

@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using Xamlity.Markup;
 using Xamlity.Properties;
 
 namespace Xamlity.Styling
 {
+    [ContentProperty(nameof(Setters))]
     public class Style
     {
         private Type targetType;

@@ -4,6 +4,7 @@ using System.Reflection;
 using Xamlity.Data;
 using Xamlity.Properties;
 using Xamlity.Rendering;
+using Xamlity.Styling;
 using Xamlity.Tree;
 
 namespace Xamlity.Markup
@@ -24,16 +25,23 @@ namespace Xamlity.Markup
             return BuildObject(document.Root, assetResolver);
         }
 
-        private static object BuildObject(XamlObjectNode node, IXamlAssetResolver assetResolver)
+        private static object BuildObject(XamlObjectNode node, IXamlAssetResolver assetResolver, Style style = null)
         {
             try
             {
                 Type type = GetType(node.TypeName);
+                if (type == typeof(Setter))
+                    return BuildSetter(node, style, assetResolver);
                 object instance = Activator.CreateInstance(type);
                 if (node.Name != null)
                     ((FrameworkElement)instance).Name = node.Name;
+                if (instance is Style)
+                    foreach (XamlPropertyNode property in node.Properties)
+                        if (property.PropertyName == nameof(Style.TargetType))
+                            ApplyProperty(instance, type, property, assetResolver);
                 foreach (XamlPropertyNode property in node.Properties)
-                    ApplyProperty(instance, type, property, assetResolver);
+                    if (!(instance is Style) || property.PropertyName != nameof(Style.TargetType))
+                        ApplyProperty(instance, type, property, assetResolver);
                 return instance;
             }
             catch (XamlBuildException)
@@ -45,6 +53,65 @@ namespace Xamlity.Markup
                 throw new XamlBuildException(node.Line, node.Column,
                     $"Cannot build type '{node.TypeName}': {exception.Message}", exception);
             }
+        }
+
+        private static Setter BuildSetter(XamlObjectNode node, Style style, IXamlAssetResolver assetResolver)
+        {
+            try
+            {
+                XamlPropertyNode propertyNode = null;
+                XamlPropertyNode valueNode = null;
+                foreach (XamlPropertyNode property in node.Properties)
+                {
+                    if (property.PropertyName == nameof(Setter.Property))
+                        propertyNode = property;
+                    else if (property.PropertyName == nameof(Setter.Value))
+                        valueNode = property;
+                    else
+                        throw new InvalidOperationException($"Unknown or read-only property '{property.PropertyName}'.");
+                }
+                if (propertyNode?.TextValue == null)
+                    throw new InvalidOperationException("Setter requires a Property.");
+                DependencyProperty dp = XamlTypeResolver.ResolveSetterProperty(style?.TargetType,
+                    propertyNode.TextValue, out string error);
+                if (error != null)
+                    throw new InvalidOperationException(error);
+                if (valueNode == null)
+                    throw new InvalidOperationException("Setter requires a Value.");
+                object value;
+                if (valueNode.TextValue != null)
+                    value = ConvertText(valueNode.TextValue, dp.PropertyType, dp, assetResolver);
+                else
+                {
+                    if (valueNode.Objects.Count != 1)
+                        throw new InvalidOperationException("Property 'Value' requires exactly one object.");
+                    value = BuildObject(valueNode.Objects[0], assetResolver);
+                }
+                var setter = new Setter(dp, value);
+                setter.Seal();
+                return setter;
+            }
+            catch (Exception exception)
+            {
+                throw new XamlBuildException(node.Line, node.Column,
+                    $"Cannot build Setter: {exception.Message}", exception);
+            }
+        }
+
+        private static object ConvertText(string text, Type propertyType, DependencyProperty dp,
+            IXamlAssetResolver assetResolver)
+        {
+            if (propertyType == typeof(ImageSource))
+            {
+                if (assetResolver == null)
+                    throw new InvalidOperationException("ImageSource properties require an asset resolver.");
+                if (!XamlValueConverter.TryConvert(text, typeof(string), null, out object path, out string pathError))
+                    throw new InvalidOperationException(pathError);
+                return assetResolver.ResolveImage((string)path);
+            }
+            if (!XamlValueConverter.TryConvert(text, propertyType, dp, out object value, out string error))
+                throw new InvalidOperationException(error);
+            return value;
         }
 
         private static void ApplyProperty(object instance, Type type, XamlPropertyNode node,
@@ -69,17 +136,7 @@ namespace Xamlity.Markup
                     throw new InvalidOperationException($"Unknown or read-only property '{node.PropertyName}'.");
                 if (node.TextValue != null)
                 {
-                    object value;
-                    if (propertyType == typeof(ImageSource))
-                    {
-                        if (assetResolver == null)
-                            throw new InvalidOperationException("ImageSource properties require an asset resolver.");
-                        if (!XamlValueConverter.TryConvert(node.TextValue, typeof(string), null, out object path, out string pathError))
-                            throw new InvalidOperationException(pathError);
-                        value = assetResolver.ResolveImage((string)path);
-                    }
-                    else if (!XamlValueConverter.TryConvert(node.TextValue, propertyType, dp, out value, out string error))
-                        throw new InvalidOperationException(error);
+                    object value = ConvertText(node.TextValue, propertyType, dp, assetResolver);
                     if (dp != null)
                         ((DependencyObject)instance).SetValue(dp, value);
                     else
@@ -97,7 +154,7 @@ namespace Xamlity.Markup
                             CollectionAddMethods.Add(collection, add);
                         }
                         foreach (XamlObjectNode child in node.Objects)
-                            add.Invoke(children, new[] { BuildObject(child, assetResolver) });
+                            add.Invoke(children, new[] { BuildObject(child, assetResolver, instance as Style) });
                     }
                     else
                     {

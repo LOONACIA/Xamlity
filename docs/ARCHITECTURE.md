@@ -50,7 +50,9 @@ Core 내부는 다음 영역으로 나눈다. 폴더 이름은 네임스페이�
 
 `{}`로 시작하는 속성 값은 마크업 확장이 아닌 리터럴이다. IR의 `TextValue`에는 접두사를 포함한 원문을 보존하고, 파서 검증과 런타임 빌더가 공통으로 쓰는 `XamlValueConverter`에서 접두사만 제거한다. 확장 인자의 인용과 역슬래시 이스케이프는 파싱 중 해제하며, 해제된 값이 `{`로 시작하면 리터럴로 변환되도록 `{}` 접두사를 붙여 저장한다. 이 표현은 기존 IR v2 필드만 사용한다.
 
-값은 파서가 보존한 원문 문자열이며 런타임 빌더가 변환한다. 필드 추가·삭제·순서·인코딩 또는 값 해석의 호환성이 바뀌면 포맷 버전을 올리고 IR을 재임포트한다. 다른 매직·버전(v1 포함)이나 잘린 데이터는 `InvalidDataException`으로 거부한다. XAML 임포터 버전은 4이며, IR v2를 유지하면서 바인딩·clr-namespace·x:DataType 때문에 오류로 임포트된 기존 에셋도 새 규칙으로 다시 임포트한다.
+`System.Type` 프로퍼티의 속성 값은 XAML 타입 이름 또는 `{x:Type ...}`으로 받는다. 접두사 매핑은 IR에 남지 않으므로 파서가 요소 이름과 같은 규칙(생성자 불필요)으로 해석하여 `TextValue`에 `"<CLR 전체 이름>, <어셈블리 이름>"`으로 정규화한다. 빌더는 `Type.GetType`으로 복원하며 IR 버전은 2를 유지한다. Style의 content property는 Setters다. Setter.Property는 입력 이름을 그대로 저장하고, 파서와 빌더가 공통 해석 함수로 둘러싼 Style.TargetType 또는 기본 xmlns의 명시적 Owner에서 DP를 찾는다. Setter.Value의 텍스트 변환과 객체 할당 검증에는 해당 DP의 타입을 사용한다.
+
+Type 값 외의 값은 파서가 보존한 원문 문자열이며 런타임 빌더가 변환한다. 필드 추가·삭제·순서·인코딩 또는 값 해석의 호환성이 바뀌면 포맷 버전을 올리고 IR을 재임포트한다. 다른 매직·버전(v1 포함)이나 잘린 데이터는 `InvalidDataException`으로 거부한다. XAML 임포터 버전은 4이며, IR v2를 유지하면서 바인딩·clr-namespace·x:DataType 때문에 오류로 임포트된 기존 에셋도 새 규칙으로 다시 임포트한다.
 
 ## 레이어 규칙
 - 의존 방향은 `Xamlity.Editor → Xamlity.Unity → Xamlity.Core` 한 방향이다. Core는 다른 어셈블리를 모른다. 이유: Core를 Unity 없이 `dotnet test`로 검증하고, 다른 엔진으로 옮길 가능성을 열어 둔다.
@@ -98,7 +100,7 @@ Input System → 추상 입력 이벤트 → 히트 테스트 → RoutedEvent �
 ```
 
 ## 횡단 관심사
-- **XAML 이름 해석**: 기본 xmlns(`https://github.com/loonacia/xamlity`)는 Core의 `Xamlity.Controls`, `Xamlity.Layout`, `Xamlity.Rendering`, `Xamlity.Data`에서 객체 타입을 찾는다. 사용자 타입은 `clr-namespace:<CLR 네임스페이스>;assembly=<어셈블리 단순 이름>`으로 매핑하며 `assembly=`는 필수다. 프로퍼티 요소의 Owner는 해당 요소의 XML 네임스페이스에서 해석하고 대상 타입 또는 그 기반 타입이어야 한다. `XamlParseResult.ReferencedAssemblies`는 사용 여부와 관계없이 선언된 매핑의 어셈블리 이름을 최초 등장 순서로 중복 없이 보존하며 파싱 오류가 있어도 반환한다. IR의 타입 이름과 빌더 해석은 기존 어셈블리 한정 이름을 그대로 사용한다.
+- **XAML 이름 해석**: 기본 xmlns(`https://github.com/loonacia/xamlity`)는 Core의 `Xamlity.Controls`, `Xamlity.Layout`, `Xamlity.Rendering`, `Xamlity.Data`, `Xamlity.Styling`에서 객체 타입을 찾는다. 사용자 타입은 `clr-namespace:<CLR 네임스페이스>;assembly=<어셈블리 단순 이름>`으로 매핑하며 `assembly=`는 필수다. 프로퍼티 요소의 Owner는 해당 요소의 XML 네임스페이스에서 해석하고 대상 타입 또는 그 기반 타입이어야 한다. `XamlParseResult.ReferencedAssemblies`는 사용 여부와 관계없이 선언된 매핑의 어셈블리 이름을 최초 등장 순서로 중복 없이 보존하며 파싱 오류가 있어도 반환한다. IR의 타입 이름과 빌더 해석은 기존 어셈블리 한정 이름을 그대로 사용한다.
 - **x:DataType 검증**: 요소와 자손의 Binding 경로를 선언 타입의 public 인스턴스 프로퍼티로 검증하며 자손의 선언이 범위를 덮어쓴다. DataContext 프로퍼티의 바인딩은 부모 범위의 타입으로 검증하고, 범위에 선언이 없으면 검증하지 않는다. x:DataType은 IR에 저장하지 않으며 런타임 리플렉션 바인딩은 그대로 유지한다.
 - **에러 처리**: XAML 오류는 가능한 한 임포트 시점에 `파일(줄,열): 메시지`로 낸다. 런타임에서 `x:DataType`이 없는 바인딩의 경로를 찾지 못하면 예외 대신 경고 로그를 남긴다(WPF 방식).
 - **로깅**: Core는 `XamlityLog.Logger`로 `IXamlityLogger`를 주입받으며, null이면 로그를 버린다. `UnityXamlityLogger.Install()`은 경고를 `Debug.LogWarning`으로 연결하며, Runtime의 `[RuntimeInitializeOnLoadMethod(SubsystemRegistration)]`와 Editor의 `[InitializeOnLoadMethod]`에서 호출한다.

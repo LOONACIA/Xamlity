@@ -6,6 +6,7 @@ using System.Xml;
 using Xamlity.Data;
 using Xamlity.Properties;
 using Xamlity.Rendering;
+using Xamlity.Styling;
 using Xamlity.Tree;
 
 namespace Xamlity.Markup
@@ -63,7 +64,8 @@ namespace Xamlity.Markup
 
             // Starts on an element and leaves the reader on the following node.
             internal XamlObjectNode ReadObject(bool isRoot = false, Type targetType = null,
-                string propertyName = null, bool allowBinding = false, Type parentDataType = null)
+                string propertyName = null, bool allowBinding = false, Type parentDataType = null,
+                Type styleTargetType = null, Type styleOwnerType = null)
             {
                 ReadNamespaceDeclarations();
                 Type dataType = ReadDataType(parentDataType);
@@ -88,7 +90,29 @@ namespace Xamlity.Markup
                 }
 
                 var assigned = new HashSet<string>(StringComparer.Ordinal);
-                ReadAttributes(type, node, assigned, dataType, parentDataType);
+                DependencyProperty setterProperty = null;
+                if (type == typeof(Setter))
+                {
+                    while (reader.MoveToNextAttribute())
+                        if ((reader.LocalName == nameof(Setter.Property) || reader.LocalName == "Setter.Property") &&
+                            (reader.NamespaceURI.Length == 0 || reader.NamespaceURI == XamlTypeResolver.DefaultNamespace))
+                        {
+                            if (IsMarkupExtension(reader.Value))
+                                ReadAttributeValue(type, typeof(DependencyProperty), null,
+                                    new XamlPropertyNode { PropertyName = nameof(Setter.Property) }, dataType);
+                            else
+                            {
+                                setterProperty = XamlTypeResolver.ResolveSetterProperty(styleTargetType, reader.Value, out string error);
+                                if (error != null)
+                                    Error(error);
+                            }
+                            break;
+                        }
+                    reader.MoveToElement();
+                }
+                ReadAttributes(type, node, assigned, dataType, parentDataType, setterProperty);
+                bool isStyle = type != null && typeof(Style).IsAssignableFrom(type);
+                styleTargetType = isStyle ? GetStyleTargetType(node) : styleTargetType;
                 string contentName = type?.GetCustomAttribute<ContentPropertyAttribute>(true)?.Name;
                 Type contentType = contentName == null ? null :
                     XamlTypeResolver.ResolveProperty(type, contentName, out _, allowCollections: true);
@@ -101,6 +125,7 @@ namespace Xamlity.Markup
                 {
                     if (type == typeof(Binding))
                         ValidateBindingPath(node, dataType);
+                    ValidateStyleAndSetter(type, node, assigned, styleTargetType, styleOwnerType);
                     return node;
                 }
 
@@ -110,7 +135,8 @@ namespace Xamlity.Markup
                     {
                         if (reader.LocalName.Contains("."))
                         {
-                            ReadPropertyElement(type, node, assigned, dataType, parentDataType);
+                            ReadPropertyElement(type, node, assigned, dataType, parentDataType,
+                                isStyle ? styleTargetType : null, setterProperty);
                             continue;
                         }
                         if (type != null && XamlTypeResolver.Resolve(reader.NamespaceURI, reader.LocalName) != typeof(Binding))
@@ -129,7 +155,7 @@ namespace Xamlity.Markup
                                 Error($"Content property '{contentName}' accepts only one child.");
                         }
                         XamlObjectNode child = ReadObject(targetType: childType, propertyName: contentName,
-                            parentDataType: dataType);
+                            parentDataType: dataType, styleTargetType: isStyle ? styleTargetType : null);
                         content?.Objects.Add(child);
                     }
                     else
@@ -144,11 +170,50 @@ namespace Xamlity.Markup
                 reader.Read();
                 if (type == typeof(Binding))
                     ValidateBindingPath(node, dataType);
+                ValidateStyleAndSetter(type, node, assigned, styleTargetType, styleOwnerType);
                 return node;
             }
 
+            private static Type GetStyleTargetType(XamlObjectNode node)
+            {
+                foreach (XamlPropertyNode property in node.Properties)
+                    if (property.PropertyName == nameof(Style.TargetType) && property.TextValue != null)
+                        return Type.GetType(property.TextValue, throwOnError: false);
+                return null;
+            }
+
+            private void ValidateStyleAndSetter(Type type, XamlObjectNode node, HashSet<string> assigned,
+                Type targetType, Type ownerType)
+            {
+                if (type == typeof(Setter))
+                {
+                    if (!assigned.Contains(nameof(Setter.Property)))
+                        NodeError("Setter requires a Property.");
+                    if (!assigned.Contains(nameof(Setter.Value)))
+                        NodeError("Setter requires a Value.");
+                }
+                else if (type != null && typeof(Style).IsAssignableFrom(type))
+                {
+                    if (!assigned.Contains(nameof(Style.TargetType)))
+                        NodeError("Style requires a TargetType.");
+                    if (targetType == null)
+                        return;
+                    if (ownerType != null && !targetType.IsAssignableFrom(ownerType))
+                        NodeError($"'{targetType.Name}' TargetType does not match type of element '{ownerType.Name}'.");
+                    foreach (XamlPropertyNode property in node.Properties)
+                        if (property.PropertyName == nameof(Style.BasedOn) && property.Objects.Count == 1)
+                        {
+                            Type baseType = GetStyleTargetType(property.Objects[0]);
+                            if (baseType != null && !baseType.IsAssignableFrom(targetType))
+                                NodeError($"Can only base on a Style with target type that is base type '{targetType.Name}'.");
+                        }
+                }
+
+                void NodeError(string message) => errors.Add(new XamlError(fileName, node.Line, node.Column, message));
+            }
+
             private void ReadPropertyElement(Type ownerType, XamlObjectNode owner, HashSet<string> assigned,
-                Type dataType, Type parentDataType)
+                Type dataType, Type parentDataType, Type styleTargetType, DependencyProperty setterProperty)
             {
                 ReadNamespaceDeclarations();
                 dataType = ReadDataType(dataType);
@@ -175,6 +240,8 @@ namespace Xamlity.Markup
                     else
                     {
                         propertyType = XamlTypeResolver.ResolveProperty(ownerType, propertyName, out dp, allowCollections: true);
+                        if (ownerType == typeof(Setter) && propertyName == nameof(Setter.Value))
+                            propertyType = setterProperty?.PropertyType ?? typeof(object);
                         if (dp != null && dp.IsAttached)
                         {
                             Error($"Attached property elements are not supported: '{name}'.");
@@ -192,7 +259,8 @@ namespace Xamlity.Markup
                     if (reader.NamespaceURI != "http://www.w3.org/2000/xmlns/" && !IsDataTypeAttribute())
                         Error("Attributes on property elements are not supported.");
                 reader.MoveToElement();
-                Type collection = XamlTypeResolver.GetCollectionInterface(propertyType);
+                Type collection = ownerType == typeof(Setter) && propertyName == nameof(Setter.Value)
+                    ? null : XamlTypeResolver.GetCollectionInterface(propertyType);
                 Type childType = collection == null ? propertyType : collection.GetGenericArguments()[0];
                 bool empty = reader.IsEmptyElement;
                 reader.Read();
@@ -212,7 +280,10 @@ namespace Xamlity.Markup
                                 bool isBinding = XamlTypeResolver.Resolve(reader.NamespaceURI, reader.LocalName) == typeof(Binding);
                                 node.Objects.Add(ReadObject(targetType: childType, propertyName: propertyName,
                                     allowBinding: collection == null && IsBindingTarget(ownerType, dp),
-                                    parentDataType: isBinding && dp == FrameworkElement.DataContextProperty ? parentDataType : dataType));
+                                    parentDataType: isBinding && dp == FrameworkElement.DataContextProperty ? parentDataType : dataType,
+                                    styleTargetType: styleTargetType,
+                                    styleOwnerType: propertyType == typeof(Style) && propertyName != nameof(Style.BasedOn)
+                                        ? ownerType : null));
                             }
                         }
                         else
@@ -287,7 +358,7 @@ namespace Xamlity.Markup
             }
 
             private void ReadAttributes(Type type, XamlObjectNode node, HashSet<string> assigned,
-                Type dataType, Type parentDataType)
+                Type dataType, Type parentDataType, DependencyProperty setterProperty)
             {
                 while (reader.MoveToNextAttribute())
                 {
@@ -368,8 +439,16 @@ namespace Xamlity.Markup
                     }
                     var property = new XamlPropertyNode { PropertyName = name, OwnerTypeName = ownerTypeName,
                         Line = location.LineNumber, Column = location.LinePosition };
-                    ReadAttributeValue(type, propertyType, dp, property,
-                        dp == FrameworkElement.DataContextProperty ? parentDataType : dataType);
+                    if (type == typeof(Setter) && name == nameof(Setter.Property))
+                        property.TextValue = reader.Value;
+                    else if (type == typeof(Setter) && name == nameof(Setter.Value))
+                    {
+                        if (setterProperty != null)
+                            ReadAttributeValue(type, setterProperty.PropertyType, setterProperty, property, dataType);
+                    }
+                    else
+                        ReadAttributeValue(type, propertyType, dp, property,
+                            dp == FrameworkElement.DataContextProperty ? parentDataType : dataType);
                     node.Properties.Add(property);
                 }
                 reader.MoveToElement();
@@ -392,7 +471,28 @@ namespace Xamlity.Markup
                     Error($"Unknown or read-only property '{property.PropertyName}' on type '{type.Name}'.");
                 else if (IsMarkupExtension(reader.Value))
                 {
-                    XamlObjectNode binding = ReadBindingExtension(reader.Value.TrimStart());
+                    string text = reader.Value.TrimStart();
+                    if (!XamlMarkupExtensionParser.TryParse(text, out string name, out var arguments, out string error))
+                    {
+                        Error(error);
+                        return;
+                    }
+                    int separator = name.IndexOf(':');
+                    string xmlNamespace = reader.LookupNamespace(separator < 0 ? "" : name.Substring(0, separator));
+                    string localName = separator < 0 ? name : name.Substring(separator + 1);
+                    if (xmlNamespace == XamlTypeResolver.XamlNamespace && localName == "Type")
+                    {
+                        if (propertyType != typeof(Type))
+                            Error("Markup extension 'x:Type' can only be used for Type values.");
+                        else if (arguments.Count != 1 ||
+                            (arguments[0].Name != null && arguments[0].Name != "TypeName") ||
+                            string.IsNullOrWhiteSpace(arguments[0].Value))
+                            Error("Markup extension 'x:Type' requires exactly one TypeName.");
+                        else
+                            property.TextValue = ReadTypeName(arguments[0].Value);
+                        return;
+                    }
+                    XamlObjectNode binding = ReadBindingExtension(name, arguments);
                     if (binding != null)
                     {
                         if (!IsBindingTarget(type, dp))
@@ -400,6 +500,11 @@ namespace Xamlity.Markup
                         ValidateBindingPath(binding, dataType);
                         property.Objects.Add(binding);
                     }
+                    return;
+                }
+                else if (propertyType == typeof(Type))
+                {
+                    property.TextValue = ReadTypeName(reader.Value);
                     return;
                 }
                 else
@@ -422,13 +527,20 @@ namespace Xamlity.Markup
                     Error($"Property '{name}': {error}");
             }
 
-            private XamlObjectNode ReadBindingExtension(string text)
+            private string ReadTypeName(string name)
             {
-                if (!XamlMarkupExtensionParser.TryParse(text, out string name, out var arguments, out string error))
-                {
+                name = name.Trim();
+                int separator = name.IndexOf(':');
+                string xmlNamespace = reader.LookupNamespace(separator < 0 ? "" : name.Substring(0, separator));
+                string localName = separator < 0 ? name : name.Substring(separator + 1);
+                Type type = XamlTypeResolver.Resolve(xmlNamespace, localName, out string error, requireConstructor: false);
+                if (type == null && !invalidMappings.Contains(xmlNamespace))
                     Error(error);
-                    return null;
-                }
+                return type == null ? null : $"{type.FullName}, {type.Assembly.GetName().Name}";
+            }
+
+            private XamlObjectNode ReadBindingExtension(string name, List<(string Name, string Value)> arguments)
+            {
                 int separator = name.IndexOf(':');
                 string xmlNamespace = reader.LookupNamespace(separator < 0 ? "" : name.Substring(0, separator));
                 string localName = separator < 0 ? name : name.Substring(separator + 1);

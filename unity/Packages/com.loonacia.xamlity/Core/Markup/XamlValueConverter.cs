@@ -27,6 +27,8 @@ namespace Xamlity.Markup
 
             if (targetType == typeof(string) || targetType == typeof(object))
                 value = text;
+            else if (targetType == typeof(Type))
+                value = Type.GetType(text, throwOnError: false);
             else if (targetType == typeof(PropertyPath))
             {
                 try
