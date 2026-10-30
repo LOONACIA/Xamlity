@@ -1,0 +1,618 @@
+id: styles-resources-templates
+goal: >
+  WPF의 스타일·리소스·템플릿 모델을 Core와 Unity에 만든다. DependencyObject 값 우선순위를 WPF `BaseValueSource` 순서(로컬 → 부모 템플릿 트리거 → 부모 템플릿 값 →
+  암시적 스타일 참조 → 스타일 트리거 → 템플릿 트리거 → 스타일 Setter → 테마 스타일 트리거 → 테마 스타일 Setter → 상속 → 기본값)로 확장하고(ADR-005 수정),
+  Style(Setter, BasedOn, 봉인), ResourceDictionary(x:Key, 암시적 키, MergedDictionaries, Source), FrameworkElement.Resources·FindResource,
+  `{StaticResource}`·`{x:Type}`·`{TemplateBinding}`과 두 가지 중첩 확장, 요소 → 시각 부모 → 앱 리소스 순의 암시적 스타일, DefaultStyleKey로 테마 사전에서 찾는 테마 스타일(WPF default style),
+  Control·ControlTemplate(지연 내용, TemplatedParent, 템플릿 이름 범위), ContentControl·ContentPresenter·UserControl과 패키지 기본 테마
+  (Themes/Resources/Xamlity/Generic.xaml), Style.Triggers·ControlTemplate.Triggers의 Property Trigger를 만든다. 앱 리소스(App.xaml)는 루트가 ResourceDictionary인
+  XAML이며 XamlitySettings 에셋의 필드로 지정한다. 스타일·리소스·템플릿·트리거를 쓴 샘플 씬이 보이면 완료다.
+  입력·라우티드 이벤트와 IsMouseOver·IsPressed·IsEnabled, Button·ICommand, ItemsControl·DataTemplate, ScrollViewer, 기본 다크 테마의 색과 치수,
+  DynamicResource와 리소스 변경 추적, Style.Resources·ControlTemplate.Resources, Setter.Value의 Binding, FrameworkElementFactory, x:Shared, 문서 이름 범위의 FindName,
+  Project Settings UI, 핫리로드는 이 계획에 넣지 않는다.
+  공통 규칙: 코드 식별자, 주석, 예외·오류·경고 메시지는 영어로 쓴다. Core 코드는 netstandard2.1 API와 C# 9 문법만 쓴다.
+  지원하는 이름은 WPF와 같은 의미로 동작해야 하고, 지원하지 않는 값·문법은 조용히 무시하지 않고 오류로 알린다(ADR-004).
+  모든 스텝은 dotnet test와 unity test를 둘 다 통과해야 한다. 기존 테스트의 기대값은 스텝 description이 요구사항 변경으로 명시한 것만 바꾼다.
+  unity test 실행 중 Unity가 새 파일의 .meta를 만들며, 이 .meta 파일은 커밋 대상이므로 지우지 않는다.
+approved: true
+max_attempts: 3
+ac_timeout_sec: 1200
+steps:
+  - id: s1-styling-value-layers-style
+    title: add WPF value precedence layers and code-defined styles
+    type: feat
+    scope: styling
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/PRD.md (핵심 기능 6), docs/ADR.md (ADR-004, ADR-005, ADR-006), docs/ARCHITECTURE.md (Core 영역 표의 `Properties`·`Styling`, 횡단 관심사 > 성능),
+      unity/Packages/com.loonacia.xamlity/Core/Properties/*.cs (특히 DependencyObject.cs의 GetValue·NotifyPropertyChanged·OnInheritanceParentChanged와 Expression 저장 방식),
+      Core/Tree/UIElement.cs, Core/Tree/FrameworkElement.cs, Core/Controls/TextBlock.cs (FontSize·Foreground는 Inherits),
+      dotnet/Xamlity.Core.Tests/Properties/DependencyPropertyTests.cs·ExpressionTests.cs, dotnet/Xamlity.Core.Tests/Layout/GridTests.cs (할당 측정 방식).
+
+      값 우선순위 층과 코드로 쓰는 Style을 만든다. XAML 문법은 s2, 리소스는 s3, 암시적·테마 스타일은 s5, 템플릿은 s6, 트리거는 s9다.
+      ADR-005가 정한 전체 순서를 이 스텝에서 한 번에 구현한다. 이유: 이후 스텝은 층에 값을 넣고 빼기만 하도록 한다.
+
+      1. Core/Properties — DependencyObject 값 층 (WPF와 같은 순서):
+         - `internal enum ValueLayer { ParentTemplateTrigger, ParentTemplate, ImplicitStyleReference, StyleTrigger, TemplateTrigger, Style, DefaultStyleTrigger, DefaultStyle }`
+           (멤버 이름은 WPF `BaseValueSource`와 같다. DefaultStyle·DefaultStyleTrigger는 테마 스타일, ParentTemplate은 템플릿이 템플릿 자식에 넣은 값,
+           ImplicitStyleReference는 암시적 스타일이 Style 프로퍼티에 들어가는 자리다).
+         - 유효 값은 높은 순으로 로컬 값(식 포함) → ParentTemplateTrigger → ParentTemplate → ImplicitStyleReference → StyleTrigger → TemplateTrigger → Style →
+           DefaultStyleTrigger → DefaultStyle → 상속값(Inherits일 때 상속 부모의 유효 값) → 메타데이터 기본값이다.
+         - `internal void SetLayerValue(DependencyProperty dp, ValueLayer layer, object value)`, `internal void ClearLayerValue(DependencyProperty dp, ValueLayer layer)`.
+           타입 검사는 SetValue와 같고(ArgumentException), Expression과 `DependencyProperty.UnsetValue`는 넣을 수 없다(ArgumentException).
+           공개 API(DependencyPropertyHelper 등)를 만들지 마라. 이유: 층 값은 이후 스텝의 Style·템플릿·트리거 엔진만 쓴다.
+         - SetValue·ClearValue·ReadLocalValue와 Expression은 계속 로컬 값만 다룬다. 층 값이 있어도 로컬 값이 이긴다.
+         - 상속: 로컬 값도 어떤 층 값도 없는 요소만 상속 부모의 유효 값(부모의 층 값 포함)을 받는다. 지금 GetValue는 조상의 로컬 값만 보므로 바꿔야 한다.
+         - 어느 층이 바뀌든 유효 값이 바뀌면(Equals 비교) 기존과 같은 알림(PropertyChangedCallback, OnPropertyChanged에 의한 measure·arrange·render 무효화,
+           그 값을 상속하는 자손 전파)을 낸다. 유효 값이 그대로면 알림이 없다.
+         - GetValue는 할당하지 않는다. 이유: 변화 없는 프레임 GC 0 (ARCHITECTURE 성능).
+      2. Core/Styling/ (namespace `Xamlity.Styling`, 새 영역. WPF와 같은 이름·의미):
+         - `public abstract class SetterBase` (생성자 internal, `public bool IsSealed { get; }`).
+         - `public sealed class Setter : SetterBase` — 생성자 `()`, `(DependencyProperty property, object value)`, `public DependencyProperty Property { get; set; }`, `public object Value { get; set; }`.
+           TargetName은 s9에서 더한다.
+         - `public sealed class SetterBaseCollection : Collection<SetterBase>` — null 항목은 ArgumentNullException.
+         - `public class Style` — 생성자 `()`, `(Type targetType)`, `(Type targetType, Style basedOn)`, `public Type TargetType { get; set; }`, `public Style BasedOn { get; set; }`,
+           `public SetterBaseCollection Setters { get; }`, `public bool IsSealed { get; }`, `public void Seal()`. Triggers는 s9.
+         - Seal 검사 (모두 InvalidOperationException, 메시지는 그대로):
+           TargetType null → `Style must have a TargetType.` (WPF는 허용하지만 이 프로젝트는 XAML에서 TargetType을 필수로 하므로 코드도 같게 한다),
+           BasedOn의 TargetType이 이 TargetType과 같거나 기반 타입이 아님 → `Can only base on a Style with target type that is base type '<TargetType 이름>'.`,
+           BasedOn 사슬 순환 → `Style BasedOn chain contains a cycle.`, Setter.Property null → `Setter.Property must not be null.`,
+           Setter.Property가 FrameworkElement.StyleProperty → `Style object is not allowed to affect the Style property of the object to which it applies.`,
+           Setter.Value가 Property 타입에 맞지 않음(값 타입에 null 포함)·Expression·Binding·UnsetValue → `'<값>' is not a valid value for the '<Property 이름>' property on a Setter.`
+         - 봉인은 BasedOn 스타일과 Setter까지 전파한다. 봉인 뒤 TargetType·BasedOn 설정, Setters 변경, Setter.Property·Value 설정은
+           InvalidOperationException(`Cannot modify a sealed Style.` / `Cannot modify a sealed Setter.`).
+      3. FrameworkElement (WPF와 같은 이름):
+         - `public static readonly DependencyProperty StyleProperty` (Style, 기본 null, AffectsMeasure), `public Style Style { get; set; }`.
+         - Style의 유효 값이 바뀌면 이전 스타일이 넣은 Style 층 값을 모두 지우고, 새 스타일을 Seal한 뒤 TargetType이 요소 타입에 할당 가능한지 검사하고
+           (아니면 InvalidOperationException `'<TargetType 이름>' TargetType does not match type of element '<요소 타입 이름>'.`, 이때 요소에 그 스타일의 값은 남지 않는다)
+           Setter 값을 Style 층에 넣는다.
+         - BasedOn 사슬은 기반부터 적용하고 파생 스타일의 Setter가 같은 프로퍼티를 덮는다. 같은 스타일 안에서 같은 프로퍼티가 여러 번이면 뒤의 것이 이긴다.
+         - Style을 null로 하면 그 스타일의 층 값이 모두 사라진다. 같은 Style 인스턴스를 여러 요소가 공유할 수 있다.
+      4. docs/ADR.md ADR-005의 값 우선순위 문장을 위 순서로 고치고 "WPF `BaseValueSource`와 같은 순서이며 테마 스타일은 DefaultStyle 층이다. 명시적·암시적 Style과 테마 스타일은 함께 적용된다"를 덧붙인다.
+      만들지 마라: XAML 문법(s2), ResourceDictionary(s3), 암시적·테마 스타일 조회(s5), 템플릿(s6), Trigger·Setter.TargetName(s9), EventSetter, Style.Resources.
+
+      테스트 dotnet/Xamlity.Core.Tests/Properties/ValuePrecedenceTests.cs, dotnet/Xamlity.Core.Tests/Styling/StyleTests.cs:
+      - 층 우선순위: 모든 층을 같은 프로퍼티에 넣고 높은 층부터 하나씩 제거하며 유효 값이 위 순서대로 드러남. 로컬 값과 BindingExpression이 모든 층을 이김, ClearValue 뒤 가장 높은 층 값.
+      - 층 값의 타입 검사, Expression·UnsetValue 거부.
+      - 상속: 부모의 Style 층 FontSize를 자식 TextBlock이 상속, 자식에 층 값이 있으면 상속하지 않음, 부모 층 값 변경이 자손에 전파되며 알림, 자식 층 값 제거로 상속값이 드러날 때 알림.
+      - 알림: 유효 값이 같은 층 변경은 알림·무효화 없음, AffectsMeasure 프로퍼티의 층 값 변경은 measure 무효화.
+      - 층 값이 있는 트리에서 GetValue 할당 0, 변화 없는 UpdateLayout + Render 할당 0.
+      - Style: Setter 적용, 로컬 값이 이김, Style 교체·null, BasedOn 덮어쓰기 순서, 같은 스타일 안 중복 프로퍼티, 공유 스타일, 각 Seal 오류 메시지, 봉인 뒤 변경 예외,
+        TargetType 불일치 예외와 파생 타입 요소 허용, Style이 Width를 바꾸면 measure 무효화.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Properties/*
+      - unity/Packages/com.loonacia.xamlity/Core/Styling*
+      - unity/Packages/com.loonacia.xamlity/Core/Tree/FrameworkElement.cs
+      - unity/Packages/com.loonacia.xamlity/Core/Tree/UIElement.cs
+      - dotnet/Xamlity.Core.Tests/Properties/*
+      - dotnet/Xamlity.Core.Tests/Styling/*
+      - docs/ADR.md
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s2-markup-style-setters
+    title: parse Style and Setter elements and Type values in XAML
+    type: feat
+    scope: markup
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/PRD.md (핵심 기능 1, 2, 6), docs/ADR.md (ADR-003, ADR-004), docs/ARCHITECTURE.md (`Markup` 영역과 IR 문단, 횡단 관심사 > XAML 이름 해석),
+      unity/Packages/com.loonacia.xamlity/Core/Markup/*.cs (XamlParser.cs의 ReadObject·ReadAttributes·ReadPropertyElement·ReadBindingExtension, XamlBuilder.cs, XamlTypeResolver.cs,
+      XamlValueConverter.cs, XamlMarkupExtensionParser.cs), Core/Styling/*.cs (s1),
+      dotnet/Xamlity.Core.Tests/Markup/XamlParserTests.cs·BindingMarkupTests.cs·ClrNamespaceMarkupTests.cs (오류 위치 검증 도우미, 테스트용 clr-namespace 타입).
+
+      XAML에서 Style과 Setter를 쓰게 한다. 이 스텝에서 Style은 `<Border.Style>` 같은 프로퍼티 요소 안에만 온다(리소스 사전은 s3).
+      1. 이름 해석: 기본 xmlns에서 `Xamlity.Styling` 네임스페이스도 찾는다. docs/ARCHITECTURE.md의 XAML 이름 해석 문단에 더한다.
+      2. Type 값:
+         - 프로퍼티 타입이 `System.Type`인 속성 값(Style.TargetType 등)은 XAML 타입 이름이다. `Border`, `local:MyBorder`(clr-namespace 접두사), `{x:Type Border}`, `{x:Type local:MyBorder}`를 받는다.
+           `{x:Type}`은 위치 인자 하나 또는 `TypeName=` 하나만 받는다(그 밖은 `Markup extension 'x:Type' requires exactly one TypeName.`).
+         - 해석은 요소 이름과 같은 규칙(XamlTypeResolver, requireConstructor: false)이며 모르는 타입은 기존 형식의 오류다.
+         - 접두사 매핑은 IR에 남지 않으므로 파서가 IR TextValue를 `"<FullName>, <어셈블리 이름>"`(기존 TypeName과 같은 형식)으로 정규화해 저장하고, 빌더는 Type.GetType으로 바꾼다.
+           docs/ARCHITECTURE.md IR 문단에 이 규칙을 적는다. IR 형식 버전은 바꾸지 않는다.
+         - `{x:Type}`을 Type이 아닌 프로퍼티에 쓰면 `Markup extension 'x:Type' can only be used for Type values.`
+           기존 BindingMarkupTests의 `{x:Type TextBlock}` 케이스는 요구사항 변경으로 이 메시지로 바꾼다.
+      3. Style 요소: content property는 Setters다. TargetType이 없으면 `Style requires a TargetType.` (Style 요소 위치).
+         Style을 받는 프로퍼티 요소의 소유 타입에 TargetType이 할당되지 않으면(`<Border.Style><Style TargetType="TextBlock">`) s1과 같은 메시지의 파스 오류.
+         BasedOn은 `<Style.BasedOn><Style .../></Style.BasedOn>`으로 쓸 수 있고(StaticResource는 s3) BasedOn TargetType 위반은 s1과 같은 메시지의 파스 오류다.
+      4. Setter 요소 (속성 순서와 무관하게 Property를 먼저 해석한다):
+         - Property: 둘러싼 Style의 TargetType에서 DP를 찾는다. `Owner.Property` 형식이면 기본 xmlns의 Owner 타입에서 찾는다(첨부 DP와 `TextBlock.FontSize` 같은 일반 DP 모두).
+           접두사가 붙은 Owner(`local:Owner.Prop`)는 `Setter.Property does not support prefixed owner types.`
+           못 찾거나 CLR 프로퍼티면 WPF 메시지 `Cannot resolve the Style Property '<쓴 이름>'. Verify that the owning type is the Style's TargetType, or use Class.Property syntax to specify the Property.`
+           Style 프로퍼티면 s1 메시지. Property가 없으면 `Setter requires a Property.`
+         - Value: 속성이면 Property의 타입으로 일반 속성과 같은 변환·검증을 한다(이미지 경로면 에셋 참조 기록, Width·Height의 Auto 포함).
+           `<Setter.Value>` 프로퍼티 요소면 객체 하나이고 Property 타입에 할당 가능해야 한다(기존 `Type 'X' is not assignable to property 'Value' of type 'Y'.` 형식, Y는 DP 타입).
+           둘 다 없으면 `Setter requires a Value.` 둘 다 있으면 기존 중복 오류. Binding은 기존 규칙대로 오류다(Setter는 FrameworkElement가 아님).
+         - IR: Property는 쓴 그대로 저장한다. 빌더는 빌드 중인 Style 인스턴스의 TargetType으로 같은 규칙을 다시 적용해 DP를 찾고 Value 텍스트를 변환한다.
+           파서와 빌더가 같은 해석 함수를 쓰게 한다. 이유: 두 곳의 규칙이 어긋나면 임포트는 통과하고 런타임에 실패한다.
+      5. XamlBuilder: Style·Setter를 만들어 `Style` 프로퍼티에 넣는다(적용 규칙은 s1). Setter 빌드 실패는 Setter 노드 줄·열의 XamlBuildException이다.
+      만들지 마라: x:Key·ResourceDictionary·StaticResource(s3), 중첩 확장(s4), Trigger(s9), x:Type의 다른 용도.
+
+      테스트 dotnet/Xamlity.Core.Tests/Markup/StyleMarkupTests.cs:
+      - 끝에서 끝까지(Parse → Serialize → Deserialize → Build): Setter 텍스트 값(Brush, Thickness, Width="Auto", enum), `Canvas.Left`, StackPanel Style의 `TextBlock.FontSize`를 자식이 상속,
+        `<Setter.Value>` 객체 값, Value를 Property 앞에 쓴 Setter, BasedOn 프로퍼티 요소, 로컬 속성이 Style 값을 이김, clr-namespace 사용자 타입 TargetType(`local:...`, `{x:Type local:...}`).
+      - IR의 TargetType TextValue가 정규화된 이름.
+      - 오류 각각의 메시지와 줄·열: TargetType 없음·모르는 타입·불일치, Property 없음·못 찾음·CLR·접두사 Owner·Style 프로퍼티, Value 없음·변환 실패·할당 불가, x:Type 오용·인자 오류, BasedOn 위반.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Markup/*
+      - unity/Packages/com.loonacia.xamlity/Core/Styling/*
+      - dotnet/Xamlity.Core.Tests/Markup/*
+      - docs/ARCHITECTURE.md
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s3-markup-resources-static-resource
+    title: add resource dictionaries, x:Key, and StaticResource lookups
+    type: feat
+    scope: markup
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/PRD.md (핵심 기능 1, 2, 6), docs/ADR.md (ADR-003, ADR-004), docs/ARCHITECTURE.md (IR 문단),
+      unity/Packages/com.loonacia.xamlity/Core/Markup/*.cs (s2 결과 포함, XamlIrSerializer.cs), Core/Styling/*.cs, Core/Tree/FrameworkElement.cs,
+      Editor/XamlImporter.cs (ScriptedImporter 버전), dotnet/Xamlity.Core.Tests/Markup/XamlBuilderTests.cs (IR 바이트 배치 테스트)·XamlParserTests.cs·ImageAssetMarkupTests.cs·BindingMarkupTests.cs.
+
+      1. Core/Styling/ResourceDictionary.cs — `public class ResourceDictionary : IDictionary` (WPF처럼 비제네릭 IDictionary):
+         - 인덱서 get은 자기 항목 → MergedDictionaries를 뒤에서부터 재귀 조회하고 없으면 null이다. set은 자기 항목에 넣거나 바꾼다. `Add`는 중복 키면 ArgumentException.
+           `Contains`도 MergedDictionaries를 포함한다(WPF와 같음). `Remove`·`Keys`·`Values`·`Count`·열거는 자기 항목만이다. null 키는 ArgumentNullException. 키 비교는 Equals다.
+         - `public Collection<ResourceDictionary> MergedDictionaries { get; }` (null 항목 거부).
+      2. FrameworkElement: `public ResourceDictionary Resources { get; set; }` (WPF처럼 DP가 아닌 CLR 프로퍼티, get에서 없으면 만든다). 런타임 조회(FindResource)는 s5다.
+      3. x:Key와 IR v3:
+         - `x:Key` 지시어는 사전 항목(아래 4)에만 쓸 수 있다. 다른 곳이면 `x:Key is only valid on resource dictionary entries.`, 마크업 확장 값이면 `x:Key does not support markup extensions.`
+           기존 XamlParserTests의 `x:Key="key"` 케이스는 요구사항 변경으로 새 메시지로 바꾼다.
+         - `XamlObjectNode`에 `public string Key { get; set; }`를 더하고 IR 형식 버전을 3으로 올린다. 객체 필드 순서는 TypeName, Name, Key, Line, Column, 프로퍼티 개수, 프로퍼티들이다
+           (문자열 인코딩은 기존과 같다). 버전 2를 포함한 다른 버전은 InvalidDataException이다. 기존 IR 배치 테스트는 요구사항 변경으로 v3 배치로 바꾼다.
+         - Editor/XamlImporter.cs의 `[ScriptedImporter(4, "xaml")]`를 5로 올린다. 이유: 기존 v2 IR 에셋을 다시 임포트해야 런타임 역직렬화가 실패하지 않는다.
+         - docs/ARCHITECTURE.md IR 문단(헤더 버전, 객체 필드, 임포터 버전)을 고친다.
+      4. 사전 문법 (WPF와 같음):
+         - `<X.Resources>` 프로퍼티 요소: 자식이 x:Key 없는 `<ResourceDictionary>` 하나면 그 사전을 대입하고, 아니면 각 자식을 키와 함께 X.Resources에 Add한다.
+         - `<ResourceDictionary>` 객체 요소: 자식 요소가 항목이다. `<ResourceDictionary.MergedDictionaries>` 프로퍼티 요소에는 x:Key 없는 ResourceDictionary를 넣는다.
+         - 항목 키는 x:Key 문자열이다. x:Key가 없는 Style은 TargetType(Type)이 키다(암시적 키). 그 밖의 x:Key 없는 항목은 `Resource dictionary entries require an x:Key.`
+           같은 사전 안의 중복 키(같은 문자열, 같은 TargetType의 암시적 키)는 뒤 항목 위치에 `Duplicate resource key '<키>'.` (Type 키는 타입 이름으로 표시).
+         - 루트 요소로 ResourceDictionary를 허용한다. 그 밖의 비 UIElement 루트 오류 메시지는 `Root element '<이름>' must be a UIElement or ResourceDictionary.`로 바꾸고
+           기존 테스트(XamlParserTests·ClrNamespaceMarkupTests)의 메시지를 요구사항 변경으로 고친다.
+      5. `{StaticResource}`:
+         - `{StaticResource Key}` 또는 `{StaticResource ResourceKey=Key}`. 키가 정확히 하나가 아니거나 다른 인자가 있으면 `Markup extension 'StaticResource' requires exactly one ResourceKey.`
+         - 속성 값 자리면 어디든 쓸 수 있다: DP·CLR 프로퍼티(Style.BasedOn, Style 포함)·첨부 프로퍼티·Setter.Value. x:Name·x:Key·x:DataType에는 쓸 수 없다(기존·위 규칙).
+           ImageSource 프로퍼티면 에셋 참조로 기록하지 않는다.
+           기존 테스트의 StaticResource 미지원 케이스(BindingMarkupTests의 `{StaticResource c}`, ImageAssetMarkupTests의 `{StaticResource Image}`)는 요구사항 변경으로 정상 동작 검증으로 옮긴다.
+           XamlParserTests의 XamlValueConverter 거부 케이스(` {StaticResource Color}`)는 변환기 단위 검사이므로 그대로 둔다.
+         - IR은 Binding과 같은 방식이다(TextValue null인 프로퍼티 노드 + 확장 객체 노드 하나 + 그 ResourceKey 프로퍼티 노드). 확장 객체의 CLR 타입은 Core/Markup의 internal 타입이어도 된다.
+           ARCHITECTURE IR 문단에 적는다.
+         - 파서는 키가 있는지 검사하지 않는다. 이유: 앱·테마 리소스는 임포트 시점에 알 수 없다.
+         - 빌더는 빌드 시점에 렉시컬 조회를 한다. 지금 빌드 중인 객체들을 안쪽부터 바깥으로 보며, FrameworkElement면 그 Resources(이미 들어간 항목),
+           빌드 중인 ResourceDictionary면 이미 추가된 항목과 MergedDictionaries를 본다. 항목은 빌드가 끝난 뒤 사전에 추가되므로 자기 자신을 찾지 못한다(WPF와 같음).
+           문서 순서상 뒤에 나오는 Resources는 보이지 않는다(WPF와 같음). 못 찾으면 확장 위치의 XamlBuildException `Resource '<키>' was not found.` 앱·테마 대체 조회는 s5에서 더한다.
+         - 찾은 값의 타입이 맞지 않으면 기존 SetValue·CLR setter 예외 경로로 XamlBuildException이 된다.
+      만들지 마라: 중첩 확장(`{StaticResource {x:Type ...}}`, `Converter={StaticResource ...}`는 s4), FindResource·암시적 스타일 적용(s5), Source(s11), DynamicResource(PRD 범위 밖).
+
+      테스트 dotnet/Xamlity.Core.Tests/Styling/ResourceDictionaryTests.cs, dotnet/Xamlity.Core.Tests/Markup/ResourceMarkupTests.cs:
+      - 사전: 인덱서·Contains·병합 사전 역순 조회, 중복 Add, null 키, Remove는 자기 항목만.
+      - 끝에서 끝까지: Border.Resources의 SolidColorBrush를 자식 Background에서 사용, 같은 사전의 앞 항목을 Style Setter.Value에서 참조, `Style="{StaticResource Key}"`, `BasedOn="{StaticResource Base}"`,
+        첨부 프로퍼티 값, 바깥 요소 Resources 조회와 가까운 사전 우선, `<ResourceDictionary>` 대입 형식과 MergedDictionaries 조회, 루트 ResourceDictionary 빌드 결과, x:Key 없는 Style의 키가 TargetType.
+      - 오류 메시지와 줄·열: 키 없는 항목, 중복 키(문자열·암시적), x:Key 위치·확장, StaticResource 인자 오류, 비 UIElement 루트.
+        못 찾은 키·문서 뒤쪽 리소스·타입 불일치는 XamlBuildException 줄·열.
+      - IR v3 왕복이 Key(null·빈 문자열·한글)를 보존하고 v2 바이트는 InvalidDataException.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Markup/*
+      - unity/Packages/com.loonacia.xamlity/Core/Styling/*
+      - unity/Packages/com.loonacia.xamlity/Core/Tree/FrameworkElement.cs
+      - unity/Packages/com.loonacia.xamlity/Editor/XamlImporter.cs
+      - dotnet/Xamlity.Core.Tests/Markup/*
+      - dotnet/Xamlity.Core.Tests/Styling/*
+      - docs/ARCHITECTURE.md
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s4-markup-nested-extensions
+    title: allow x:Type resource keys and StaticResource inside Binding arguments
+    type: feat
+    scope: markup
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/ADR.md (ADR-004), docs/ARCHITECTURE.md (IR 문단), unity/Packages/com.loonacia.xamlity/Core/Markup/XamlMarkupExtensionParser.cs,
+      Core/Markup/XamlParser.cs (ReadBindingExtension과 s2·s3의 확장 처리), Core/Markup/XamlBuilder.cs (s3 렉시컬 조회),
+      dotnet/Xamlity.Core.Tests/Markup/BindingMarkupTests.cs, ResourceMarkupTests.cs (s3), ClrNamespaceMarkupTests.cs (테스트용 사용자 변환기).
+
+      확장 인자 값에 중첩 확장을 허용한다. 지원 조합은 WPF에서 흔한 두 가지뿐이다.
+      1. XamlMarkupExtensionParser: 인자 값 자리(위치·이름 있는 인자)의 `{`는 중첩 확장의 시작이다. 짝이 맞는 `}`까지(인용 안의 괄호는 세지 않음)를 하나의 확장으로 재귀 파싱한다.
+         중첩 확장 뒤에는 공백, `,`, `}`만 올 수 있다(그 밖은 기존 `Invalid markup extension syntax: ...` 형식). 인용·`\` 이스케이프·`{}` 리터럴 처리는 유지한다.
+      2. 허용 조합:
+         - StaticResource의 키(위치 인자 또는 `ResourceKey=`)에 `{x:Type T}` → Type 키. s3의 암시적 Style 키 항목을 찾는다(`BasedOn="{StaticResource {x:Type Border}}"`).
+         - Binding의 이름 있는 인자(Converter, ConverterParameter 등) 값에 `{StaticResource key}` (그 키 자리에 다시 x:Type 허용).
+         - 그 밖의 조합(중첩 Binding, x:Type 안의 확장, Binding 위치 인자 Path의 확장 등)은 `Nested markup extension '<쓴 이름>' is not supported here.`
+           기존 `Nested markup extensions are not supported.` 메시지는 없앤다. BindingMarkupTests의 `{Binding Converter={StaticResource c}}` 케이스는 요구사항 변경으로 정상 동작 검증으로 옮긴다.
+      3. IR: 중첩 확장은 그 인자 프로퍼티 노드의 Objects에 확장 객체 노드로 넣는다(TextValue null). x:Type 노드는 s2 형식으로 정규화한 타입 이름을 TypeName 프로퍼티로 갖는다.
+         모든 노드의 줄·열은 원래 속성 위치다. docs/ARCHITECTURE.md IR 문단에 중첩 표현을 적는다. IR 형식 버전은 바꾸지 않는다.
+      4. 빌더: 키가 x:Type이면 Type 키로 조회한다. Binding 인자의 StaticResource는 s3 조회로 값을 얻어 Binding 프로퍼티에 넣는다(Converter가 IValueConverter가 아니면 기존 경로의 XamlBuildException).
+         x:DataType 바인딩 경로 검증은 그대로 동작해야 한다.
+      만들지 마라: 그 밖의 중첩 조합, `x:Key="{x:Type ...}"` (s3 오류 유지), x:Static.
+
+      테스트 (BindingMarkupTests·ResourceMarkupTests에 추가):
+      - `{Binding Name, Converter={StaticResource Upper}}`가 리소스의 사용자 변환기(clr-namespace 테스트 타입)로 변환, `ConverterParameter={StaticResource P}`, 인용 안의 괄호, 공백 변형.
+      - `{StaticResource {x:Type Border}}`로 암시적 키 스타일 조회, 안쪽 사전의 같은 타입 스타일이 바깥 사전 스타일을 BasedOn으로 이어 받음, `ResourceKey={x:Type local:...}`.
+      - 지원하지 않는 조합과 괄호 불일치의 메시지·줄·열, IR 노드 구조.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Markup/*
+      - dotnet/Xamlity.Core.Tests/Markup/*
+      - docs/ARCHITECTURE.md
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s5-styling-implicit-theme-styles
+    title: apply implicit and theme styles from tree, application, and theme resources
+    type: feat
+    scope: styling
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/PRD.md (핵심 기능 5, 6, 12), docs/ADR.md (ADR-005, ADR-006), docs/ARCHITECTURE.md (데이터 흐름 > 런타임: 생성),
+      unity/Packages/com.loonacia.xamlity/Core/Properties/DependencyObject.cs와 Core/Styling/*.cs (s1·s3), Core/Tree/FrameworkElement.cs,
+      Core/Tree/UIElement.cs (AddVisualChild·RemoveVisualChild·OnInheritanceParentChanged), Core/Tree/UIRoot.cs, Core/Markup/XamlBuilder.cs (s3 StaticResource 조회).
+
+      1. 앱·테마 사전 주입. 전역 static을 만들지 마라. 이유: 루트마다 명시적으로 넘겨 테스트가 서로 영향을 주지 않게 한다.
+         - UIRoot: 생성자 `(UIElement rootElement, ITextMeasurer textMeasurer, FontHandle defaultFont, ResourceDictionary applicationResources, ResourceDictionary themeResources)`를 더하고
+           기존 생성자는 null로 위임한다. `public ResourceDictionary ApplicationResources { get; }`, `public ResourceDictionary ThemeResources { get; }`.
+         - XamlBuilder: `Build(XamlDocument document, IXamlAssetResolver assetResolver, ResourceDictionary applicationResources, ResourceDictionary themeResources)`를 더하고 기존 오버로드는 null로 위임한다.
+           StaticResource는 s3의 렉시컬 조회에서 못 찾으면 applicationResources → themeResources 순으로 찾는다(PRD 6의 요소 → 부모 → 앱 → 테마).
+      2. FrameworkElement 런타임 조회 (WPF와 같은 이름): `public object FindResource(object resourceKey)` (못 찾으면 InvalidOperationException `'<키>' resource not found.`),
+         `public object TryFindResource(object resourceKey)` (없으면 null). 순서: 자기 Resources → 시각 부모들의 Resources → 소속 UIRoot의 ApplicationResources → ThemeResources.
+      3. 암시적 스타일 (ImplicitStyleReference 층):
+         - 키는 요소의 실제 타입(GetType())이다. 순서: 자기 Resources → 시각 부모들의 Resources → UIRoot.ApplicationResources. 테마 사전은 보지 않는다(WPF: 암시적 스타일 조회는 앱에서 멈춘다).
+         - 찾은 Style을 Style 프로퍼티의 ImplicitStyleReference 층에 넣는다. 그래서 로컬·ParentTemplate Style이 이기고, 로컬 Style을 지우면 암시적 스타일이 다시 쓰이며,
+           Style getter는 암시적 스타일도 돌려준다(WPF와 같음). 적용 자체는 s1처럼 Style 유효 값의 변경으로 일어난다.
+         - 다시 찾는 시점: 요소가 시각 부모에 붙거나 떨어질 때 그 서브트리 전체, UIRoot가 만들어질 때 루트 서브트리 전체. 찾은 스타일이 같으면(ReferenceEquals) 아무 일도 하지 않는다.
+           Resources 내용이 나중에 바뀌는 것은 추적하지 않는다. 이유: 리소스 변경 추적은 PRD 범위 밖이다(DynamicResource와 같은 장치가 필요).
+      4. 테마 스타일 (DefaultStyle 층, WPF의 default style):
+         - FrameworkElement: `protected internal static readonly DependencyProperty DefaultStyleKeyProperty` (object, 기본 null, 무효화 없음), `protected internal object DefaultStyleKey { get; set; }`.
+           컨트롤은 생성자에서 자기 타입을 넣는다(s6~s8). OverrideMetadata를 만들지 마라. 이유: 생성자 설정으로 같은 결과(파생 클래스가 기반 키를 물려받음)를 얻는다.
+         - 테마 스타일은 `UIRoot.ThemeResources[DefaultStyleKey]`가 Style일 때다. 트리 Resources와 앱 사전은 보지 않는다. 키가 null이거나 UIRoot·테마가 없으면 없다.
+         - 테마 스타일의 Setter(BasedOn 포함)는 DefaultStyle 층에 넣는다. 명시적·암시적 Style과 함께 적용되며 같은 프로퍼티는 Style 층이 이긴다.
+           예: 앱의 암시적 스타일이 Background만 정하면 테마 스타일의 다른 Setter(나중의 Template)는 그대로 남는다.
+         - 봉인·TargetType 검사는 s1과 같다. 다시 찾는 시점은 암시적 스타일과 같다.
+      5. docs/ARCHITECTURE.md 데이터 흐름 > 런타임: 생성의 스타일 줄을 "암시적 Style(요소 → 시각 부모 → 앱), 테마 스타일(DefaultStyleKey로 테마 사전), StaticResource(빌드 시 렉시컬 → 앱 → 테마)"로 고친다.
+      만들지 마라: 템플릿(s6), 트리거(s9), 리소스 변경 알림, Application 클래스.
+
+      테스트 dotnet/Xamlity.Core.Tests/Styling/ImplicitStyleTests.cs (DefaultStyleKey를 설정하는 테스트용 FrameworkElement 파생 클래스를 테스트 프로젝트에 둔다):
+      - 암시적 스타일: 자기·부모·조상·앱 Resources에서 찾음, 가까운 것이 이김, 테마 사전의 같은 타입 키 스타일은 암시적 스타일로 쓰지 않음, 파생 타입 요소에는 기반 타입 키 스타일이 적용되지 않음(WPF와 같음),
+        로컬 Style이 이기고 ClearValue로 암시적 복귀, 다른 부모로 옮기면 새 스타일, 떼어내면 조상·앱 스타일이 사라짐, UIRoot 생성 시 앱 스타일 적용.
+      - 테마 스타일: DefaultStyleKey로 적용, 앱 암시적 스타일과 함께 적용될 때 프로퍼티별 우선순위, 파생 클래스가 기반 키를 물려받음, UIRoot가 없으면 적용 안 됨.
+      - XAML: 빌드 시 앱·테마 대체 StaticResource, 앱이 테마보다 먼저, 렉시컬이 앱보다 먼저. FindResource·TryFindResource 순서와 예외 메시지.
+      - 스타일이 적용된 트리에서 변화 없는 UpdateLayout + Render 할당 0.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Tree/*
+      - unity/Packages/com.loonacia.xamlity/Core/Styling/*
+      - unity/Packages/com.loonacia.xamlity/Core/Properties/*
+      - unity/Packages/com.loonacia.xamlity/Core/Markup/XamlBuilder.cs
+      - dotnet/Xamlity.Core.Tests/Styling/*
+      - docs/ARCHITECTURE.md
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s6-controls-control-template
+    title: add Control and ControlTemplate with deferred template content
+    type: feat
+    scope: controls
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/PRD.md (핵심 기능 5), docs/ADR.md (ADR-003, ADR-004, ADR-005, ADR-006), docs/ARCHITECTURE.md (`Controls`·`Styling` 영역, IR 문단, 레이어 규칙의 lookless 컨트롤),
+      unity/Packages/com.loonacia.xamlity/Core/Properties/*.cs, Core/Styling/*.cs, Core/Tree/*.cs, Core/Markup/*.cs (s2~s5),
+      Core/Controls/Border.cs (단일 시각 자식 패턴), Core/Controls/TextBlock.cs (Foreground·FontSize 등록),
+      dotnet/Xamlity.Core.Tests/Styling/ImplicitStyleTests.cs (s5 도우미), dotnet/Xamlity.Core.Tests/Markup/ClrNamespaceMarkupTests.cs (테스트 타입을 XAML에서 쓰는 방법).
+
+      1. DependencyProperty: `public DependencyProperty AddOwner(Type ownerType)` (WPF와 같음) — 같은 인스턴스를 (ownerType, Name)으로도 찾게 등록한다. 이미 있으면 ArgumentException. 메타데이터 재정의는 없다.
+      2. Core/Controls/Control.cs — `public class Control : FrameworkElement` (WPF와 같은 이름·기본값):
+         - `TemplateProperty` (ControlTemplate, null, AffectsMeasure), `BackgroundProperty`·`BorderBrushProperty` (Brush, null, AffectsRender), `BorderThicknessProperty`·`PaddingProperty` (Thickness 0, AffectsMeasure),
+           `HorizontalContentAlignmentProperty` (Left)·`VerticalContentAlignmentProperty` (Top) (AffectsArrange),
+           `ForegroundProperty = TextBlock.ForegroundProperty.AddOwner(typeof(Control))`, `FontSizeProperty = TextBlock.FontSizeProperty.AddOwner(typeof(Control))`, 각 CLR 래퍼.
+           이유: 같은 DP라 컨트롤에 넣은 Foreground·FontSize를 템플릿 안 TextBlock이 상속한다.
+         - Control은 직접 그리지 않는다(ADR-006). 시각 자식은 템플릿 루트 하나다. MeasureOverride는 ApplyTemplate 뒤 루트를 measure하고 그 DesiredSize(없으면 0)를 돌려준다.
+           ArrangeOverride는 루트를 (0, 0, finalSize)로 arrange하고 finalSize를 돌려준다.
+      3. FrameworkElement (WPF와 같은 이름): `public bool ApplyTemplate()` (새 시각 트리를 만들었으면 true), `public virtual void OnApplyTemplate()`,
+         `protected internal DependencyObject GetTemplateChild(string childName)`, `public DependencyObject TemplatedParent { get; }` (템플릿이 만든 요소만 non-null). 템플릿이 없는 요소의 ApplyTemplate은 false.
+      4. Core/Styling/ControlTemplate.cs — `public sealed class ControlTemplate`: `public Type TargetType { get; set; }`, `public bool IsSealed { get; }`, `public void Seal()`. Triggers는 s9.
+         FrameworkTemplate 기반 클래스는 만들지 마라. 이유: 두 번째 템플릿(DataTemplate)이 생기는 리스트 계획에서 추출한다.
+         - XAML 내용(자식 요소 0개 또는 1개, FrameworkElement)은 빌드할 때 인스턴스로 만들지 않고 IR 노드로 보관했다가 적용할 때마다 새 트리를 만든다(WPF의 지연 템플릿).
+           루트가 2개 이상이면 `ControlTemplate can have only one root element.` 내용을 인스턴스로 들고 있는 public 프로퍼티와 코드로 템플릿을 만드는 API(FrameworkElementFactory)를 만들지 마라.
+           이유: 템플릿은 공유되고 적용마다 새 트리가 필요하다. 파서·빌더의 특수 처리 방식은 자유이며 docs/ARCHITECTURE.md IR 문단에 템플릿 내용 표현을 적는다.
+         - 템플릿 안 x:Name은 템플릿 이름 범위에 속한다. 같은 템플릿 안 중복은 파스 오류 `Name '<이름>' is already defined in this template.`
+           문서 이름 범위의 중복 검사는 만들지 마라. 이유: FindName이 생기는 코드비하인드 계획에서 다룬다.
+         - TargetType은 s2의 Type 값 규칙이다. 템플릿 내용은 일반 요소와 같은 파서 검증을 받는다.
+         - 템플릿 내용의 StaticResource는 적용할 때 찾는다. 순서: 템플릿 트리 안에서 빌드 중인 요소들 → ControlTemplate 객체를 빌드할 때의 렉시컬 범위(그때 빌드 중이던 요소·사전을 기억) →
+           그 빌드의 앱 → 테마 사전. 못 찾으면 그 노드 위치의 XamlBuildException이 ApplyTemplate(즉 measure)에서 난다.
+      5. 템플릿 적용 (WPF와 같음):
+         - Template의 유효 값이 바뀌면 기존 템플릿 트리를 떼고 다음 measure 또는 ApplyTemplate 호출에서 새 트리를 만든다.
+           TargetType이 있고 컨트롤 타입이 그 타입에 할당되지 않으면 InvalidOperationException `'<TargetType 이름>' ControlTemplate TargetType does not match templated type '<컨트롤 타입 이름>'.`
+         - 템플릿이 만든 모든 요소의 TemplatedParent는 컨트롤이다. 템플릿 XAML이 템플릿 자식에 넣는 값(속성, 프로퍼티 요소, StaticResource 결과, Style 포함)은 로컬 값이 아니라 ParentTemplate 층에 넣는다.
+           이유: s9의 TargetName 트리거(ParentTemplateTrigger)가 이 값을 덮어야 한다. 템플릿 안의 `{Binding}`은 기존처럼 로컬 값 식으로 둔다(이 계획의 단순화이며 ARCHITECTURE에 적는다).
+         - 루트를 시각 자식으로 붙인 뒤 OnApplyTemplate을 부른다. GetTemplateChild는 현재 적용된 템플릿 이름 범위에서 찾는다.
+         - 암시적 스타일 경계(WPF와 같음): Control이 아닌 요소에 TemplatedParent가 있으면 암시적 스타일 조회는 시각 부모를 따라 TemplatedParent까지(그 Resources 포함) 보고 멈춘 뒤 앱 사전으로 넘어간다.
+           Control인 템플릿 자식은 s5 규칙 그대로다.
+      6. XAML: 기본 xmlns에서 Control·ControlTemplate을 찾는다(새 네임스페이스가 아니면 문서 변경 없음). `<Control.Template>`과 Style Setter의 `<Setter.Value><ControlTemplate>`이 동작한다.
+      만들지 마라: TemplateBinding(s7), ContentControl·ContentPresenter·UserControl과 테마 파일(s8), Triggers(s9), ControlTemplate.Resources.
+
+      테스트 dotnet/Xamlity.Core.Tests/Controls/ControlTemplateTests.cs:
+      - `<Control>`에 Border 템플릿: measure 전 GetTemplateChild null, ApplyTemplate true 후 다시 false, 템플릿 자식 TemplatedParent, OnApplyTemplate 1회(테스트 파생 컨트롤),
+        레이아웃 좌표(Margin·정렬)가 WPF 규칙과 같음, Border 그리기 명령.
+      - 같은 ControlTemplate을 두 컨트롤이 공유해도 서로 다른 트리, Template 교체 시 옛 트리 분리와 새 트리, null이면 시각 자식 없음과 DesiredSize 0.
+      - 템플릿 값이 ParentTemplate 층이라 internal API로 넣은 ParentTemplateTrigger 값이 이김, 템플릿 안 Style 값.
+      - 템플릿 안 StaticResource: 템플릿 정의 위치의 Resources, 앱·테마 대체, 못 찾으면 ApplyTemplate에서 XamlBuildException 줄·열.
+      - Style의 Template Setter로 적용, s5 테마 스타일(DefaultStyleKey 테스트 컨트롤)의 Template.
+      - 컨트롤 Foreground를 템플릿 안 TextBlock이 상속, XAML `Foreground` 속성이 AddOwner로 해석됨.
+      - 암시적 스타일 경계: 앱의 암시적 TextBlock 스타일은 템플릿 안 TextBlock에 적용, 컨트롤 바깥 조상 Resources의 암시적 TextBlock 스타일은 적용 안 됨, 템플릿 안 Control은 바깥 스타일을 받음.
+      - 오류: 루트 2개, 템플릿 이름 중복(다른 템플릿 간 같은 이름은 허용), TargetType 불일치 예외, AddOwner 중복.
+      - 템플릿이 적용된 트리에서 변화 없는 UpdateLayout + Render 할당 0.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Properties/DependencyProperty.cs
+      - unity/Packages/com.loonacia.xamlity/Core/Controls/Control.cs*
+      - unity/Packages/com.loonacia.xamlity/Core/Styling/*
+      - unity/Packages/com.loonacia.xamlity/Core/Tree/*
+      - unity/Packages/com.loonacia.xamlity/Core/Markup/*
+      - dotnet/Xamlity.Core.Tests/Controls/*
+      - docs/ARCHITECTURE.md
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s7-controls-template-binding
+    title: bind template child properties to the templated parent with TemplateBinding
+    type: feat
+    scope: controls
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/ADR.md (ADR-004, ADR-005, ADR-006), unity/Packages/com.loonacia.xamlity/Core/Controls/Control.cs·Core/Styling/ControlTemplate.cs·Core/Markup/*.cs (s6),
+      Core/Properties/DependencyObject.cs (층 API), dotnet/Xamlity.Core.Tests/Controls/ControlTemplateTests.cs, dotnet/Xamlity.Core.Tests/Markup/BindingMarkupTests.cs.
+
+      1. `{TemplateBinding Prop}`·`{TemplateBinding Property=Prop}` (WPF와 같음):
+         - ControlTemplate 내용 안에서만 쓸 수 있다. 밖이면 `TemplateBinding can only be used within a ControlTemplate.`
+           기존 BindingMarkupTests의 `{TemplateBinding Text}` 케이스는 요구사항 변경으로 이 메시지로 바꾼다.
+         - Prop은 가장 가까운 ControlTemplate의 TargetType(없으면 Control)에서 찾는 DP다. `Owner.Prop`은 s2 Setter 규칙과 같다.
+           못 찾으면 `Cannot resolve the TemplateBinding Property '<이름>' on type '<타입 이름>'.`
+         - 대상은 템플릿 안 DependencyObject 요소의 DP다. CLR 프로퍼티면 `TemplateBinding can only be set on a dependency property.`
+         - 원본 DP 타입이 대상 DP 타입에 할당되지 않으면 `TemplateBinding source property '<원본>' of type '<A>' cannot be assigned to property '<대상>' of type '<B>'.`
+           이유: 변환기가 없어 WPF에서는 런타임에 조용히 실패하는 경우를 임포트 오류로 바꾼다(ADR 원칙: 오류는 이른 시점).
+         - 다른 인자(Converter 등)는 `Markup extension 'TemplateBinding' accepts only Property.`
+         - IR은 Binding·StaticResource와 같은 확장 객체 노드 방식이다. docs/ARCHITECTURE.md IR 문단에 더한다.
+      2. 런타임: 템플릿을 적용할 때 대상의 ParentTemplate 층에 TemplatedParent의 원본 프로퍼티 유효 값을 넣고, 그 유효 값이 바뀔 때마다(로컬·스타일·트리거·상속 등 원인 무관) 갱신한다.
+         템플릿이 떼어지면 더 이상 갱신하지 않는다. Expression을 쓰지 말고 컨트롤이 현재 템플릿 인스턴스의 TemplateBinding 목록을 갱신하는 방식이면 충분하다.
+         원본 값이 바뀌지 않으면 일이 없고 할당이 없어야 한다.
+      만들지 마라: ContentPresenter의 암시적 Content 연결(s8), TemplateBinding 변환기, `{Binding RelativeSource={RelativeSource TemplatedParent}}`.
+
+      테스트 dotnet/Xamlity.Core.Tests/Controls/TemplateBindingTests.cs:
+      - Background·BorderBrush·BorderThickness·Padding을 Border에 TemplateBinding: 초기 값, 컨트롤 로컬 값 변경, Style Setter 값, 상속값(Foreground) 변경이 전파, 렌더 dirty와 measure 무효화.
+      - internal API로 넣은 ParentTemplateTrigger 층 값이 TemplateBinding 값을 이기고, 제거하면 복귀.
+      - 템플릿 교체 뒤 옛 트리 대상은 갱신되지 않음. HorizontalContentAlignment → HorizontalAlignment 배치 좌표.
+      - 오류 각각의 메시지·줄·열과 IR 노드.
+      - 변화 없는 UpdateLayout + Render 할당 0.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Controls/Control.cs
+      - unity/Packages/com.loonacia.xamlity/Core/Styling/*
+      - unity/Packages/com.loonacia.xamlity/Core/Tree/FrameworkElement.cs
+      - unity/Packages/com.loonacia.xamlity/Core/Markup/*
+      - dotnet/Xamlity.Core.Tests/Controls/*
+      - dotnet/Xamlity.Core.Tests/Markup/BindingMarkupTests.cs
+      - docs/ARCHITECTURE.md
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s8-controls-content-control-theme
+    title: add ContentControl, ContentPresenter, UserControl, and the default theme file
+    type: feat
+    scope: controls
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/PRD.md (핵심 기능 5), docs/ADR.md (ADR-006), docs/ARCHITECTURE.md (디렉토리 구조의 Themes/, 미정 사항),
+      unity/Packages/com.loonacia.xamlity/Core/Controls/Control.cs·Core/Styling/*.cs (s6·s7), Core/Controls/TextBlock.cs, Core/Data/BindingExpression.cs (기본 변환의 IFormattable 규칙),
+      dotnet/Xamlity.Core.Tests/Controls/*.cs, dotnet/Xamlity.Core.Tests/Rendering/RecordingDrawingContext.cs.
+
+      1. Core/Controls (WPF와 같은 이름·의미):
+         - `ContentControl : Control` — `[ContentProperty("Content")]`, `ContentProperty` (object, 기본 null), 생성자에서 `DefaultStyleKey = typeof(ContentControl)`.
+         - `ContentPresenter : FrameworkElement` — `ContentProperty` (object, AffectsMeasure).
+           템플릿 안에서 Content를 직접(속성·TemplateBinding·StaticResource) 받지 않았고 TemplatedParent가 ContentControl이면 `Content="{TemplateBinding Content}"`와 같게 동작한다(WPF ContentSource 기본값).
+           표시: UIElement면 그 요소를 유일한 시각 자식으로 붙인다. null이면 자식이 없다. 그 밖은 TextBlock 하나를 만들어 Text에 string은 그대로, IFormattable은
+           `ToString(null, CultureInfo.InvariantCulture)`, 그 밖은 ToString()을 넣는다(바인딩 기본 변환과 같은 규칙). 만든 TextBlock의 TemplatedParent는 ContentPresenter다(WPF 기본 템플릿과 같음).
+           Content가 바뀌거나 ContentPresenter가 속한 템플릿이 떼어지면 이전 콘텐츠 요소를 시각 자식에서 뗀다. 이유: 템플릿을 교체하면 같은 콘텐츠 요소를 새 ContentPresenter가 붙여야 한다.
+           레이아웃은 자식 하나를 받은 크기로 measure하고 finalSize로 arrange한다.
+         - `UserControl : ContentControl` — 생성자에서 `DefaultStyleKey = typeof(UserControl)`.
+         ContentTemplate·ContentSource·RecognizesAccessKey·HasContent를 만들지 마라. 이유: DataTemplate은 리스트 계획(PRD 8)이다.
+      2. 기본 테마 파일 unity/Packages/com.loonacia.xamlity/Themes/Resources/Xamlity/Generic.xaml (루트 ResourceDictionary, Unity 로드는 s10):
+         - WPF 기본 테마와 같은 구조로 두 스타일만 넣는다.
+           ContentControl: Template = `<ControlTemplate TargetType="ContentControl"><ContentPresenter/></ControlTemplate>`.
+           UserControl: HorizontalContentAlignment·VerticalContentAlignment = Stretch, Template = Background·BorderBrush·BorderThickness·Padding을 TemplateBinding한 Border 안에
+           HorizontalAlignment·VerticalAlignment를 HorizontalContentAlignment·VerticalContentAlignment에 TemplateBinding한 ContentPresenter.
+         - 색·치수는 넣지 않는다. ARCHITECTURE 미정 사항(다크 테마 색과 치수)은 Button이 생기는 계획에서 정하므로 그대로 둔다.
+         - docs/ARCHITECTURE.md 디렉토리 구조의 Themes/ 줄에 이 경로와 `Resources.Load<XamlAsset>("Xamlity/Generic")`으로 읽는다는 것을 적는다. 이유: 패키지 안 Resources 폴더라 설정 없이 플레이어 빌드에도 들어간다.
+      3. Core 테스트 도우미: 저장소의 Generic.xaml을 읽어(TestContext.CurrentContext.TestDirectory에서 위로 올라가며 `unity/Packages/com.loonacia.xamlity`를 찾는다) 파싱·빌드한 사전을 UIRoot의 테마로 쓴다.
+         이유: 실제 테마 파일을 Unity 없이 검증한다.
+      만들지 마라: Button 등 다른 컨트롤과 그 테마 스타일, 테마 색, Unity 쪽 로드(s10), 트리거(s9).
+
+      테스트 dotnet/Xamlity.Core.Tests/Controls/ContentControlTests.cs:
+      - Generic.xaml이 오류 없이 파싱되고 두 Style이 TargetType 키로 있음.
+      - 테마가 있는 UIRoot에서 `<ContentControl Content="한글"/>`이 TextBlock을 만들어 글리프 런을 그림, int·IFormattable 값(CurrentCulture를 de-DE로 바꿔도 InvariantCulture, 끝나면 복원), Content 교체로 텍스트 갱신과 measure 무효화.
+      - UIElement 콘텐츠: 시각 부모가 ContentPresenter, DataContext·Foreground 상속과 그 안 `{Binding}`, Content 교체 시 이전 요소가 떨어짐, 템플릿 교체 뒤 같은 요소가 새 ContentPresenter에 붙음.
+      - UserControl: Background·BorderBrush·BorderThickness·Padding이 Border 그리기 명령과 콘텐츠 좌표에 반영(WPF 좌표 계산과 일치), 콘텐츠가 Stretch로 배치.
+      - 앱의 암시적 ContentControl 스타일이 Template 없이 Background만 정해도 테마 템플릿이 남음.
+      - 템플릿 안 ContentPresenter에 Content를 명시적으로 TemplateBinding한 경우와 암시적 연결이 같은 결과.
+      - 콘텐츠가 있는 트리에서 변화 없는 UpdateLayout + Render 할당 0.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Controls/*
+      - unity/Packages/com.loonacia.xamlity/Core/Styling/*
+      - unity/Packages/com.loonacia.xamlity/Core/Tree/*
+      - unity/Packages/com.loonacia.xamlity/Core/Markup/*
+      - unity/Packages/com.loonacia.xamlity/Themes*
+      - dotnet/Xamlity.Core.Tests/Controls/*
+      - docs/ARCHITECTURE.md
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s9-styling-property-triggers
+    title: add property triggers to styles and control templates
+    type: feat
+    scope: styling
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/PRD.md (핵심 기능 5, 6), docs/ADR.md (ADR-005, ADR-006), unity/Packages/com.loonacia.xamlity/Core/Properties/DependencyObject.cs (층),
+      Core/Styling/*.cs, Core/Controls/Control.cs, Core/Tree/FrameworkElement.cs (s1·s5의 Style 적용), Core/Markup/XamlParser.cs·XamlBuilder.cs (s2의 Setter 해석 함수, s6의 템플릿 이름 범위),
+      dotnet/Xamlity.Core.Tests/Styling/StyleTests.cs, dotnet/Xamlity.Core.Tests/Controls/TemplateBindingTests.cs.
+
+      1. Core/Styling (WPF와 같은 이름):
+         - `public abstract class TriggerBase` (생성자 internal, `IsSealed`), `public sealed class Trigger : TriggerBase` — `[ContentProperty("Setters")]`,
+           `public DependencyProperty Property { get; set; }`, `public object Value { get; set; }`, `public SetterBaseCollection Setters { get; }`.
+         - `public sealed class TriggerCollection : Collection<TriggerBase>` (null 거부, 봉인 뒤 변경은 InvalidOperationException).
+         - `Style.Triggers`, `ControlTemplate.Triggers` (TriggerCollection). `Setter.TargetName` (string)과 생성자 `(DependencyProperty property, object value, string targetName)`.
+         - 봉인 검사(InvalidOperationException): Trigger.Property null → `Trigger.Property must not be null.`, Trigger.Value가 Property 타입에 맞지 않음 → `'<값>' is not a valid value for the '<Property>' property on a Trigger.`,
+           Style.Setters나 Style 트리거 Setter의 TargetName → `'TargetName' property cannot be set on a Style Setter.` (WPF 메시지), Setter 값 검사는 s1과 같다.
+      2. 동작:
+         - 조건: 트리거를 가진 요소(스타일이면 스타일이 적용된 요소, 템플릿이면 컨트롤)의 Property 유효 값이 Value와 같으면(object.Equals) 활성이다.
+           조건 프로퍼티의 유효 값이 바뀔 때만 다시 평가한다. 매 프레임 평가하지 마라. 이유: 이벤트 기반, 변화 없는 프레임 GC 0.
+         - 활성 트리거 Setter의 값은 층에 넣고 비활성이 되면 거둔다: Style.Triggers → 그 요소의 StyleTrigger, 테마 스타일의 Triggers → DefaultStyleTrigger,
+           ControlTemplate.Triggers의 TargetName 없는 Setter → 컨트롤의 TemplateTrigger, TargetName Setter → 그 템플릿 자식의 ParentTemplateTrigger.
+         - 같은 층·같은 대상·같은 프로퍼티에 활성 트리거가 여럿이면 컬렉션에서 뒤의 트리거가 이긴다. BasedOn 사슬의 트리거는 기반 먼저다(파생이 이긴다).
+         - Style이 바뀌거나 사라지면 그 스타일의 트리거 값을, Template이 바뀌거나 떼어지면 그 템플릿의 트리거 값을 거둔다.
+      3. XAML:
+         - `<Style.Triggers>`·`<ControlTemplate.Triggers>` 프로퍼티 요소에 `<Trigger Property="..." Value="...">`와 Setter 자식.
+         - Trigger.Property는 둘러싼 Style·ControlTemplate의 TargetType(템플릿에서 없으면 Control)에서 s2 Setter 규칙과 같은 함수로 해석한다(WPF 메시지에서 'Style Property' 대신 'Trigger Property').
+           Value는 그 DP 타입으로 변환·검증한다(StaticResource 허용). 속성 순서와 무관하다. 없으면 `Trigger requires a Property.` / `Trigger requires a Value.`
+         - 템플릿 트리거 Setter의 TargetName은 그 템플릿 이름 범위의 이름이어야 한다(아니면 WPF 메시지 `Cannot find the Trigger target '<이름>'.`). Triggers가 내용보다 앞에 나와도 되므로
+           ControlTemplate 요소를 다 읽은 뒤 검사한다. TargetName Setter의 Property는 그 이름 요소의 타입에서 해석한다. Style 안의 TargetName은 위 봉인 메시지와 같은 파스 오류다.
+         - 빌더는 같은 해석 함수로 런타임 객체를 만든다.
+      만들지 마라: DataTrigger·MultiTrigger·EventTrigger·EnterActions·SourceName (ADR-006, PRD 범위 밖), IsMouseOver·IsPressed·IsEnabled 프로퍼티(입력 계획), 트리거 연쇄 무한 반복 방지 장치.
+
+      테스트 dotnet/Xamlity.Core.Tests/Styling/TriggerTests.cs (조건 프로퍼티는 테스트용 컨트롤의 bool DP나 기존 DP를 쓴다):
+      - 스타일 트리거: 조건 참·거짓 전환에 따른 값과 알림, Setter 값보다 우선, 로컬 값이 트리거를 이김, 여러 트리거 순서, BasedOn 트리거 순서, Style 교체 시 거둠, 조건 프로퍼티가 바인딩·상속으로 바뀔 때.
+      - 템플릿 트리거: TargetName으로 TemplateBinding 값을 덮고 비활성이 되면 복귀, TargetName 없는 Setter가 컨트롤 값을 바꿈, 스타일 트리거가 템플릿 트리거를 이김, Template 교체 시 거둠.
+      - 테마 스타일 트리거가 DefaultStyleTrigger 층으로 들어가 앱 스타일 Setter에 짐.
+      - XAML 끝에서 끝까지와 오류 메시지·줄·열(Property 없음·못 찾음, Value 없음·변환 실패, TargetName 없음·Style 안 TargetName, Triggers가 내용보다 앞인 템플릿은 정상).
+      - 트리거가 있는 트리에서 변화 없는 UpdateLayout + Render 할당 0, 조건 변화 1회에 관련 Setter만 갱신.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Styling/*
+      - unity/Packages/com.loonacia.xamlity/Core/Controls/Control.cs
+      - unity/Packages/com.loonacia.xamlity/Core/Tree/FrameworkElement.cs
+      - unity/Packages/com.loonacia.xamlity/Core/Properties/*
+      - unity/Packages/com.loonacia.xamlity/Core/Markup/*
+      - dotnet/Xamlity.Core.Tests/Styling/*
+      - dotnet/Xamlity.Core.Tests/Controls/*
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s10-unity-theme-app-resources
+    title: load the package theme and application resources in XamlityRoot
+    type: feat
+    scope: unity
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/PRD.md (핵심 기능 6, 12), docs/ADR.md (ADR-003, ADR-013), docs/ARCHITECTURE.md (레이어 규칙, 데이터 흐름, 횡단 관심사 > 설정),
+      unity/Packages/com.loonacia.xamlity/Runtime/XamlityRoot.cs·XamlAsset.cs·XamlitySettings.cs, Themes/Resources/Xamlity/Generic.xaml (s8),
+      Core/Tree/UIRoot.cs·Core/Markup/XamlBuilder.cs (s5 오버로드), Tests/Editor/RenderingTests.cs·BindingRuntimeTests.cs (루트 도우미, 메모리 XamlAsset), Tests/Editor/SampleSetupTests.cs.
+
+      1. XamlAsset: 루트가 ResourceDictionary인 에셋을 빌드하는 internal 경로(예: `internal ResourceDictionary BuildResourceDictionary(ResourceDictionary themeResources)`)와
+         UIElement 빌드에 앱·테마 사전을 넘기는 오버로드를 더한다. 루트 타입이 기대와 다르면 InvalidOperationException `XAML asset '<이름>' must have a <UIElement|ResourceDictionary> root.`
+         기존 공개 `Build()`의 동작은 유지한다.
+      2. 테마: `Resources.Load<XamlAsset>("Xamlity/Generic")`로 읽는다. 없거나 임포트 오류면 경고 한 번(`Xamlity default theme is missing or has import errors.`)을 남기고 테마 없이 동작한다.
+      3. XamlitySettings: `[SerializeField] private XamlAsset applicationResources;`, `public XamlAsset ApplicationResources => applicationResources;`.
+         Project Settings UI를 만들지 마라. 이유: PRD 12의 설정 UI는 별도 계획이며 지금은 Inspector로 지정한다.
+      4. XamlityRoot.Build: 테마 사전 → 앱 사전(테마를 대체 사전으로) → 뷰(앱·테마) 순으로 빌드하고 UIRoot에 앱·테마 사전을 넘긴다.
+         테스트가 앱 리소스를 넘길 수 있게 `internal void Build(XamlAsset asset, TMP_FontAsset defaultFont = null, XamlAsset applicationResources = null)` 형태로 하고 Awake는 설정 값을 넘긴다.
+         사전은 Build마다 새로 만든다. 캐시를 만들지 마라. 이유: 단순함 우선, 재사용은 핫리로드 계획에서 다룬다.
+      5. docs/ARCHITECTURE.md: 데이터 흐름 > 런타임: 생성에 테마·앱 사전 빌드 순서를, 횡단 관심사 > 설정에 applicationResources 필드를 적는다.
+      만들지 마라: MergedDictionaries Source(s11), 샘플(s12), 설정 UI, 사전 캐시.
+
+      테스트 Tests/Editor/ThemeResourcesTests.cs (메모리 XamlAsset 또는 기존 테스트처럼 Assets/XamlityTestTemp/ 임시 폴더):
+      - `Resources.Load<XamlAsset>("Xamlity/Generic")`가 HasIr이고 빌드한 사전에 ContentControl·UserControl 스타일이 있음.
+      - XamlityRoot에서 `<UserControl Background=... Padding=...><TextBlock Text="한글"/></UserControl>`과 `<ContentControl Content="텍스트"/>`가 테마 템플릿으로 메시를 만듦(배치·정점 수로 확인).
+      - 앱 리소스 에셋: 키 리소스를 뷰의 StaticResource로 사용, 앱의 암시적 TextBlock 스타일 적용, 앱 사전 안 StaticResource가 테마로 대체 조회.
+      - 루트 타입 오류 메시지. 생성한 오브젝트·에셋은 TearDown에서 정리.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Runtime/XamlAsset.cs
+      - unity/Packages/com.loonacia.xamlity/Runtime/XamlityRoot.cs
+      - unity/Packages/com.loonacia.xamlity/Runtime/XamlitySettings.cs
+      - unity/Packages/com.loonacia.xamlity/Tests/Editor/ThemeResourcesTests.cs*
+      - docs/ARCHITECTURE.md
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s11-markup-merged-dictionary-source
+    title: merge resource dictionaries from other XAML files with Source
+    type: feat
+    scope: markup
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/ADR.md (ADR-003의 의존성 규칙, ADR-011의 OnImportAsset 금지 사항), docs/ARCHITECTURE.md (데이터 흐름 > 에디터: 임포트),
+      unity/Packages/com.loonacia.xamlity/Core/Markup/*.cs (XamlAssetReference, IXamlAssetResolver, 이미지 경로 처리), Core/Styling/ResourceDictionary.cs,
+      Editor/XamlImporter.cs (TryResolveImagePath, 이미지 의존성), Runtime/XamlAsset.cs (AssetResolver, s10의 사전 빌드), Tests/Editor/XamlImporterTests.cs (임시 폴더·재임포트 테스트).
+
+      1. Core:
+         - `ResourceDictionary.Source` (WPF와 같은 이름, `public Uri Source { get; }`, setter는 internal). 이유: 런타임 코드에는 에셋 해석기가 없어 코드에서 설정하면 불러올 수 없으므로 설정 자체를 막는다.
+         - XAML의 ResourceDictionary 요소(어느 위치든)에 `Source="경로"`를 쓰면 그 XAML 에셋 사전의 내용(항목과 MergedDictionaries)을 가진다.
+           Source와 자식 항목을 함께 쓰면 `A ResourceDictionary with Source cannot have entries.` 빈 경로는 오류. 경로 문법은 이미지와 같고 엔진 규칙은 임포터가 검사한다.
+         - 파서는 이미지와 구분되는 에셋 참조로 기록한다(XamlAssetReference에 종류를 더하거나 별도 목록, 방식 자유).
+         - `IXamlAssetResolver`에 `ResourceDictionary ResolveResourceDictionary(string value)`를 더한다. 빌더는 Source 노드에서 이것을 부르고 null이면 그 노드 위치의 XamlBuildException이다.
+      2. Editor/XamlImporter: 사전 참조마다 이미지와 같은 경로 해석을 한다. 대상이 `.xaml`이 아니거나 없으면 `파일(줄,열): Resource dictionary '<값>': <이유>` 임포트 오류.
+         소스 파일이 있으면 `ctx.DependsOnArtifact(path)`, 없으면 `ctx.DependsOnSourceAsset(path)`. 대상 XamlAsset이 HasIr이 아니면(임포트 오류) 오류, IR 루트가 ResourceDictionary가 아니면 오류.
+         참조 테이블에 대상 XamlAsset을 넣는다. OnImportAsset 안에서 ImportAsset·Refresh를 부르지 마라(ADR-011).
+      3. Runtime/XamlAsset 해석기: 참조 테이블의 XamlAsset을 원래 빌드와 같은 앱·테마 대체 사전으로 빌드해 돌려준다.
+         순환(A → B → A)은 빌드 중인 에셋 스택으로 감지해 `Resource dictionary '<값>' is part of a reference cycle.` (XamlBuildException으로 줄·열 포함)로 끝낸다. 스택 오버플로가 나면 안 된다.
+      4. docs/ARCHITECTURE.md 데이터 흐름 > 에디터: 임포트의 "다른 XAML(MergedDictionaries 등)은 소스 의존성 등록" 줄을 실제 규칙으로 고친다.
+      만들지 마라: 사전 캐시, 패키지 밖 경로(pack URI), Source를 코드에서 설정하는 경로.
+
+      테스트:
+      - Core (dotnet/Xamlity.Core.Tests/Markup/ResourceMarkupTests.cs에 추가): Source 파싱·IR·참조 종류, 가짜 해석기로 병합 결과 조회, Source와 항목 동시 사용 오류, 해석기 null → XamlBuildException.
+      - Unity (Tests/Editor/MergedDictionaryImportTests.cs, Assets/XamlityTestTemp/): A.xaml이 MergedDictionaries로 B.xaml을 Source 참조 → HasIr, 빌드 뒤 B의 브러시를 StaticResource로 사용.
+        B의 브러시를 바꿔 저장하면 A를 다시 빌드할 때 새 값, B를 오류 XAML로 바꾸면 A가 재임포트되어 줄·열 오류. 없는 파일·비 XAML·ResourceDictionary가 아닌 루트도 줄·열 임포트 오류.
+        같은 Refresh에서 만든 두 파일(참조하는 쪽 이름이 알파벳순으로 앞)도 결국 정상 임포트. 순환 참조 예외.
+        자동 재임포트나 임포트 순서 문제가 해결되지 않으면 테스트를 약화하지 말고 blockers에 적는다.
+    expected_files:
+      - unity/Packages/com.loonacia.xamlity/Core/Markup/*
+      - unity/Packages/com.loonacia.xamlity/Core/Styling/ResourceDictionary.cs
+      - unity/Packages/com.loonacia.xamlity/Editor/XamlImporter.cs
+      - unity/Packages/com.loonacia.xamlity/Runtime/XamlAsset.cs
+      - unity/Packages/com.loonacia.xamlity/Tests/Editor/MergedDictionaryImportTests.cs*
+      - dotnet/Xamlity.Core.Tests/Markup/*
+      - docs/ARCHITECTURE.md
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
+
+  - id: s12-sample-styles
+    title: add style showcase sample scene with app resources and triggers
+    type: feat
+    scope: sample
+    timeout_sec: 2700
+    description: |
+      먼저 읽을 파일: docs/PRD.md (핵심 기능 5, 6, 12), unity/Assets/Samples/Binding/* (샘플 구성·VM 패턴), unity/Assets/Scenes/BindingSample.unity,
+      unity/Assets/Resources/XamlitySettings.asset, unity/Packages/com.loonacia.xamlity/Tests/Editor/SampleSetupTests.cs, Themes/Resources/Xamlity/Generic.xaml,
+      Runtime/XamlityRoot.cs·XamlitySettings.cs (s10), dotnet/Xamlity.Core.Tests/Styling/*.cs·Controls/*.cs (XAML 문법 예).
+
+      이 계획의 기능을 한 화면에서 보여 주는 스타일 샘플을 만든다. 기존 Hello·Hud·Binding 샘플과 씬은 바꾸지 마라. 이유: SampleSetupTests가 그 구성을 검증한다.
+      샘플 스크립트는 Assembly-CSharp에 들어가며 namespace는 `Xamlity.Samples.Styles`.
+      1. unity/Assets/App.xaml (루트 ResourceDictionary): MergedDictionaries에 `Source="Samples/Styles/Palette.xaml"`, 키 스타일 하나(카드 Border 스타일). 암시적 스타일은 넣지 마라.
+         이유: 앱 리소스는 모든 샘플에 적용되므로 기존 샘플의 모양을 바꾸면 안 된다. unity/Assets/Resources/XamlitySettings.asset의 applicationResources에 연결한다.
+      2. unity/Assets/Samples/Styles/Palette.xaml: 색 브러시 키 리소스들(배경, 패널, 강조, 경고, 텍스트).
+      3. unity/Assets/Samples/Styles/StyleShowcase.xaml — 반드시 포함: 루트 Resources의 암시적 TextBlock 스타일(Foreground·FontSize를 StaticResource로),
+         앱 카드 스타일에 BasedOn한 키 스타일, `BasedOn="{StaticResource {x:Type ...}}"` 하나, 사용자 ControlTemplate(TemplateBinding Background·Padding, ContentPresenter)을 가진 ContentControl 상태 배지 —
+         Content를 VM의 Status 문자열에 바인딩하고 Style.Triggers의 `<Trigger Property="Content" Value="위험">`이 Background를 경고 브러시로 바꾸며, ControlTemplate.Triggers에 TargetName Setter 하나,
+         테마 템플릿을 쓰는 UserControl(Background·BorderBrush·Padding), 한글 텍스트. 기준 해상도 1920x1080에서 보기 좋게 배치한다.
+      4. unity/Assets/Samples/Styles/StyleShowcaseViewModel.cs (INotifyPropertyChanged, `string Status`), StyleShowcaseDemo.cs (MonoBehaviour, `[SerializeField] private XamlityRoot root;`,
+         Start에서 VM을 DataContext로 넣고 몇 초마다 Status를 "정상"과 "위험"으로 번갈아 바꾼다).
+      5. unity/Assets/Scenes/StyleSample.unity: BindingSample과 같은 URP 카메라 설정, XamlityRoot(xaml = StyleShowcase.xaml, 기준 해상도 1920x1080), root가 연결된 StyleShowcaseDemo.
+         씬은 일회성 batchmode 스크립트로 만들어도 되며 그 스크립트는 커밋하지 말고 지운다.
+      6. SampleSetupTests.cs에 추가(샘플 타입은 `Type.GetType("..., Assembly-CSharp")` 리플렉션):
+         App.xaml·Palette.xaml·StyleShowcase.xaml HasIr, 설정의 ApplicationResources가 App.xaml, 앱·테마와 함께 빌드한 트리에서 암시적 TextBlock 스타일의 Foreground가 Palette 브러시,
+         VM Status를 "위험"으로 바꾸면 배지 Background가 경고 브러시가 되고 "정상"이면 돌아옴, UserControl이 테마 템플릿 Border를 가짐, StyleSample 씬 구성(Additive로 열고 테스트 끝에 닫는다).
+         기존 샘플 테스트가 그대로 통과해야 한다.
+      화면이 의도대로 보이는지는 사람이 Play 모드에서 확인한다. summary에 확인 방법(씬 이름, 기대 화면, 시간에 따라 배지 색이 바뀌는지)을 적는다.
+    expected_files:
+      - unity/Assets/App.xaml*
+      - unity/Assets/Samples/Styles*
+      - unity/Assets/Scenes/StyleSample.unity*
+      - unity/Assets/Resources/XamlitySettings.asset
+      - unity/Packages/com.loonacia.xamlity/Tests/Editor/SampleSetupTests.cs
+    ac:
+      - dotnet test dotnet/Xamlity.Core.Tests
+      - 'unity test unity --mode EditMode --timeout 900 --output "unity/Logs/editmode-results.xml" --non-interactive'
