@@ -6,6 +6,7 @@ namespace Xamlity.Properties
     public class DependencyObject
     {
         private readonly Dictionary<DependencyProperty, object> localValues = new Dictionary<DependencyProperty, object>();
+        private Dictionary<DependencyProperty, object[]> layerValues;
 
         public object GetValue(DependencyProperty dp)
         {
@@ -16,6 +17,8 @@ namespace Xamlity.Properties
             {
                 if (current.localValues.TryGetValue(dp, out var value))
                     return ResolveValue(dp, value);
+                if (current.TryGetLayerValue(dp, out value))
+                    return value;
                 if (!dp.Inherits)
                     break;
             }
@@ -58,6 +61,60 @@ namespace Xamlity.Properties
             return localValues.TryGetValue(dp, out var value) ? value : DependencyProperty.UnsetValue;
         }
 
+        internal void SetLayerValue(DependencyProperty dp, ValueLayer layer, object value)
+        {
+            if (dp == null)
+                throw new ArgumentNullException(nameof(dp));
+            if (value is Expression || ReferenceEquals(value, DependencyProperty.UnsetValue))
+                throw new ArgumentException("Expressions and UnsetValue cannot be stored in a value layer.", nameof(value));
+            if (value == null ? dp.PropertyType.IsValueType : !dp.PropertyType.IsInstanceOfType(value))
+                throw new ArgumentException("The value does not match the property type.", nameof(value));
+
+            object oldValue = GetValue(dp);
+            if (layerValues == null)
+                layerValues = new Dictionary<DependencyProperty, object[]>();
+            if (!layerValues.TryGetValue(dp, out var values))
+            {
+                values = new object[(int)ValueLayer.DefaultStyle + 1];
+                for (int i = 0; i < values.Length; i++)
+                    values[i] = DependencyProperty.UnsetValue;
+                layerValues.Add(dp, values);
+            }
+            values[(int)layer] = value;
+            NotifyPropertyChanged(dp, oldValue, GetValue(dp));
+        }
+
+        internal void ClearLayerValue(DependencyProperty dp, ValueLayer layer)
+        {
+            object oldValue = GetValue(dp);
+            if (layerValues == null || !layerValues.TryGetValue(dp, out var values))
+                return;
+            values[(int)layer] = DependencyProperty.UnsetValue;
+            if (!TryGetLayerValue(dp, out _))
+                layerValues.Remove(dp);
+            NotifyPropertyChanged(dp, oldValue, GetValue(dp));
+        }
+
+        private bool TryGetLayerValue(DependencyProperty dp, out object value)
+        {
+            if (layerValues != null && layerValues.TryGetValue(dp, out var values))
+            {
+                for (int i = 0; i < values.Length; i++)
+                {
+                    if (!ReferenceEquals(values[i], DependencyProperty.UnsetValue))
+                    {
+                        value = values[i];
+                        return true;
+                    }
+                }
+            }
+            value = null;
+            return false;
+        }
+
+        private bool HasOwnValue(DependencyProperty dp) =>
+            localValues.ContainsKey(dp) || (layerValues != null && layerValues.ContainsKey(dp));
+
         protected virtual void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
         {
         }
@@ -99,7 +156,7 @@ namespace Xamlity.Properties
             for (int i = 0; i < properties.Count; i++)
             {
                 DependencyProperty dp = properties[i];
-                if (localValues.ContainsKey(dp))
+                if (HasOwnValue(dp))
                     continue;
                 object oldValue = oldParent == null ? dp.DefaultMetadata.DefaultValue : oldParent.GetValue(dp);
                 NotifyPropertyChanged(dp, oldValue, GetValue(dp));
@@ -120,7 +177,7 @@ namespace Xamlity.Properties
             for (int i = 0; i < InheritanceChildrenCount; i++)
             {
                 DependencyObject child = GetInheritanceChild(i);
-                if (!child.localValues.ContainsKey(dp))
+                if (!child.HasOwnValue(dp))
                     child.NotifyPropertyChanged(dp, oldValue, newValue);
             }
         }

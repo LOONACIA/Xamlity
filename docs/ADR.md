@@ -47,7 +47,7 @@
 
 ### ADR-005: 경량 DependencyProperty 시스템
 - **상태**: 채택
-- **결정**: 프로퍼티는 정적으로 등록된 프로퍼티 객체와 메타데이터(기본값, AffectsMeasure/AffectsArrange/AffectsRender, Inherits)로 정의한다. 값 우선순위는 높은 순으로 로컬 값 → 템플릿 트리거·스타일 트리거 → 템플릿 내부 값·스타일 Setter → 상속값 → 기본값이다. 첨부 프로퍼티와 변경 알림을 지원한다. coercion, validation callback, Freezable은 만들지 않는다.
+- **결정**: 프로퍼티는 정적으로 등록된 프로퍼티 객체와 메타데이터(기본값, AffectsMeasure/AffectsArrange/AffectsRender, Inherits)로 정의한다. 값 우선순위는 높은 순으로 로컬 값(식 포함) → 부모 템플릿 트리거(ParentTemplateTrigger) → 부모 템플릿 값(ParentTemplate) → 암시적 스타일 참조(ImplicitStyleReference) → 스타일 트리거(StyleTrigger) → 템플릿 트리거(TemplateTrigger) → 스타일 Setter(Style) → 테마 스타일 트리거(DefaultStyleTrigger) → 테마 스타일 Setter(DefaultStyle) → 상속값 → 기본값이다. WPF `BaseValueSource`와 같은 순서이며 테마 스타일은 DefaultStyle 층이다. 명시적·암시적 Style과 테마 스타일은 함께 적용된다. 첨부 프로퍼티와 변경 알림을 지원한다. coercion, validation callback, Freezable은 만들지 않는다.
 - **이유**: 바인딩 대상, 첨부 프로퍼티(Grid.Row), 상속(DataContext, FontSize), 스타일·트리거 우선순위, 레이아웃·렌더 자동 무효화가 모두 이 시스템에 달려 있다.
 - **트레이드오프**: 일반 C# 프로퍼티보다 정의가 장황하다. WPF의 전체 우선순위 단계(애니메이션, coercion 등)는 없다.
 - **하네스에 미치는 영향**: 컨트롤의 시각·레이아웃 관련 프로퍼티를 일반 필드나 자동 프로퍼티로 만들지 마라. 반드시 등록된 프로퍼티로 정의한다.

@@ -2,11 +2,48 @@ using System;
 using Xamlity.Data;
 using Xamlity.Layout;
 using Xamlity.Properties;
+using Xamlity.Styling;
 
 namespace Xamlity.Tree
 {
     public class FrameworkElement : UIElement
     {
+        public static readonly DependencyProperty StyleProperty = DependencyProperty.Register(
+            nameof(Style), typeof(Style), typeof(FrameworkElement),
+            new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsMeasure,
+                (d, e) => ((FrameworkElement)d).ApplyStyle((Style)e.NewValue)));
+
+        private Style appliedStyle;
+
+        public Style Style
+        {
+            get => (Style)GetValue(StyleProperty);
+            set => SetValue(StyleProperty, value);
+        }
+
+        private void ApplyStyle(Style style)
+        {
+            style?.Seal();
+            bool targetMatches = style == null || style.TargetType.IsAssignableFrom(GetType());
+            Style previous = appliedStyle;
+            appliedStyle = targetMatches ? style : null;
+            if (appliedStyle != null)
+            {
+                foreach (var setter in appliedStyle.SetterValues)
+                    SetLayerValue(setter.Key, ValueLayer.Style, setter.Value);
+            }
+            if (previous != null)
+            {
+                foreach (var setter in previous.SetterValues)
+                {
+                    if (appliedStyle == null || !appliedStyle.SetterValues.ContainsKey(setter.Key))
+                        ClearLayerValue(setter.Key, ValueLayer.Style);
+                }
+            }
+            if (!targetMatches)
+                throw new InvalidOperationException($"'{style.TargetType.Name}' TargetType does not match type of element '{GetType().Name}'.");
+        }
+
         public static readonly DependencyProperty DataContextProperty = DependencyProperty.Register(
             nameof(DataContext), typeof(object), typeof(FrameworkElement),
             new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.Inherits));
