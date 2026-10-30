@@ -48,7 +48,7 @@ Core 내부는 다음 영역으로 나눈다. 폴더 이름은 네임스페이�
 
 `{Binding ...}` 속성은 `TextValue`가 null인 프로퍼티 노드와 그 `Objects`의 `Xamlity.Data.Binding` 객체 하나로 표현한다. 위치 인자는 `Path` 프로퍼티로 저장하며, 확장에서 생성한 모든 노드의 줄·열은 원래 속성 위치다. `<TextBlock.Text><Binding ... /></TextBlock.Text>`도 같은 구조이며 각 노드의 실제 XML 위치를 보존한다. 빌더는 Binding 객체 값을 `BindingOperations.SetBinding`으로 연결한다. 대상은 FrameworkElement의 DP(첨부 DP 포함)여야 하며 암시적 content 자식과 컬렉션 항목에는 Binding을 넣을 수 없다.
 
-`{StaticResource Key}`와 `{StaticResource ResourceKey=Key}`도 `TextValue`가 null인 프로퍼티 노드와 확장 객체 하나로 표현한다. 객체 타입은 `Xamlity.Markup.StaticResourceExtension`이고, `ResourceKey` 프로퍼티 하나를 가지며 모든 노드의 줄·열은 속성 위치다. 문자열 키는 `TextValue`에 저장한다. 키의 존재 여부는 파서가 검사하지 않는다. 빌더는 생성 중인 객체를 안쪽부터 바깥쪽으로 순회하여 FrameworkElement.Resources 또는 ResourceDictionary의 이미 추가된 항목과 병합 사전을 조회한다. 항목은 생성 완료 후 추가하므로 자기 자신과 뒤쪽 리소스는 보이지 않는다. 앱·테마 대체 조회는 아직 지원하지 않는다.
+`{StaticResource Key}`와 `{StaticResource ResourceKey=Key}`도 `TextValue`가 null인 프로퍼티 노드와 확장 객체 하나로 표현한다. 객체 타입은 `Xamlity.Markup.StaticResourceExtension`이고, `ResourceKey` 프로퍼티 하나를 가지며 모든 노드의 줄·열은 속성 위치다. 문자열 키는 `TextValue`에 저장한다. 키의 존재 여부는 파서가 검사하지 않는다. 빌더는 생성 중인 객체를 안쪽부터 바깥쪽으로 순회하여 FrameworkElement.Resources 또는 ResourceDictionary의 이미 추가된 항목과 병합 사전을 조회한다. 항목은 생성 완료 후 추가하므로 자기 자신과 뒤쪽 리소스는 보이지 않는다. 렉시컬 범위에서 찾지 못하면 빌더에 주입한 앱 사전, 테마 사전 순으로 대체 조회한다.
 
 중첩 확장은 인자 프로퍼티의 `TextValue`를 null로 두고 `Objects`에 확장 객체 하나를 저장한다. 지원 조합은 StaticResource의 위치 인자 또는 ResourceKey에 넣는 `{x:Type T}`와 Binding의 이름 있는 인자에 넣는 `{StaticResource key}`뿐이며, 후자의 키에도 x:Type을 넣을 수 있다. 중첩 x:Type 객체는 `Xamlity.Markup.TypeExtension`이고 `TypeName` 프로퍼티의 `TextValue`에 `"<CLR 전체 이름>, <어셈블리 이름>"`으로 정규화한 타입 이름을 저장한다. 빌더는 이를 Type 키로 복원하여 같은 렉시컬 범위에서 조회하고, Binding 인자의 리소스 값은 해당 Binding 프로퍼티에 할당한다. 중첩 깊이에 관계없이 모든 객체·프로퍼티 노드의 줄·열은 원래 속성 위치이며 기존 IR v3의 재귀 객체 표현을 사용하므로 버전은 바꾸지 않는다. 그 밖의 중첩 조합과 `x:Key="{x:Type ...}"`는 오류다.
 
@@ -90,7 +90,7 @@ Type 값 외의 값은 파서가 보존한 원문 문자열이며 런타임 빌�
 XamlityRoot.Awake
   → XamlAsset → 참조 테이블의 UnityImageSource 해석기를 주입한 Core 빌더 → 요소 트리
      (x:Class면 그 타입을 생성하고 InitializeComponent 호출)
-  → 암시적 Style·ControlTemplate 적용 (요소 → 부모 → App.xaml → 기본 테마)
+  → 암시적 Style(요소 → 시각 부모 → 앱), 테마 스타일(DefaultStyleKey로 테마 사전), StaticResource(빌드 시 렉시컬 → 앱 → 테마)
   → 코드에서 DataContext 설정 → 바인딩 연결
 
 [런타임: 매 프레임]

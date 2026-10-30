@@ -1,6 +1,7 @@
 using System;
 using Xamlity.Layout;
 using Xamlity.Rendering;
+using Xamlity.Styling;
 
 namespace Xamlity.Tree
 {
@@ -14,17 +15,28 @@ namespace Xamlity.Tree
         }
 
         public UIRoot(UIElement rootElement, ITextMeasurer textMeasurer, FontHandle defaultFont)
+            : this(rootElement, textMeasurer, defaultFont, null, null)
+        {
+        }
+
+        public UIRoot(UIElement rootElement, ITextMeasurer textMeasurer, FontHandle defaultFont,
+            ResourceDictionary applicationResources, ResourceDictionary themeResources)
         {
             RootElement = rootElement ?? throw new ArgumentNullException(nameof(rootElement));
             TextMeasurer = textMeasurer;
             DefaultFont = defaultFont;
+            ApplicationResources = applicationResources;
+            ThemeResources = themeResources;
             RootElement.Root = this;
             RootElement.InvalidateSubtreeMeasure();
+            RootElement.RefreshSubtreeStyles();
         }
 
         public UIElement RootElement { get; }
         public ITextMeasurer TextMeasurer { get; }
         public FontHandle DefaultFont { get; }
+        public ResourceDictionary ApplicationResources { get; }
+        public ResourceDictionary ThemeResources { get; }
         public bool IsRenderDirty { get; private set; } = true;
 
         public void UpdateLayout(Size viewportSize)

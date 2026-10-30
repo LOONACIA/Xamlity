@@ -11,9 +11,16 @@ namespace Xamlity.Tree
         public static readonly DependencyProperty StyleProperty = DependencyProperty.Register(
             nameof(Style), typeof(Style), typeof(FrameworkElement),
             new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsMeasure,
-                (d, e) => ((FrameworkElement)d).ApplyStyle((Style)e.NewValue)));
+                (d, e) => ((FrameworkElement)d).ApplyStyle((Style)e.NewValue, ValueLayer.Style,
+                    ref ((FrameworkElement)d).appliedStyle)));
+
+        protected internal static readonly DependencyProperty DefaultStyleKeyProperty = DependencyProperty.Register(
+            nameof(DefaultStyleKey), typeof(object), typeof(FrameworkElement),
+            new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.None));
 
         private Style appliedStyle;
+        private Style implicitStyle;
+        private Style themeStyle;
         private ResourceDictionary resources;
 
         public ResourceDictionary Resources
@@ -28,7 +35,73 @@ namespace Xamlity.Tree
             set => SetValue(StyleProperty, value);
         }
 
-        private void ApplyStyle(Style style)
+        protected internal object DefaultStyleKey
+        {
+            get => GetValue(DefaultStyleKeyProperty);
+            set => SetValue(DefaultStyleKeyProperty, value);
+        }
+
+        public object FindResource(object resourceKey)
+        {
+            if (TryFindResource(resourceKey, true, out object value))
+                return value;
+            throw new InvalidOperationException($"'{resourceKey}' resource not found.");
+        }
+
+        public object TryFindResource(object resourceKey)
+        {
+            TryFindResource(resourceKey, true, out object value);
+            return value;
+        }
+
+        private bool TryFindResource(object resourceKey, bool includeTheme, out object value)
+        {
+            if (resourceKey == null)
+                throw new ArgumentNullException(nameof(resourceKey));
+            for (UIElement current = this; current != null; current = current.VisualParent)
+            {
+                if (current is FrameworkElement element && element.resources != null
+                    && element.resources.Contains(resourceKey))
+                {
+                    value = element.resources[resourceKey];
+                    return true;
+                }
+            }
+            UIRoot root = GetRoot();
+            if (root?.ApplicationResources != null && root.ApplicationResources.Contains(resourceKey))
+            {
+                value = root.ApplicationResources[resourceKey];
+                return true;
+            }
+            if (includeTheme && root?.ThemeResources != null && root.ThemeResources.Contains(resourceKey))
+            {
+                value = root.ThemeResources[resourceKey];
+                return true;
+            }
+            value = null;
+            return false;
+        }
+
+        internal void RefreshStyles()
+        {
+            TryFindResource(GetType(), false, out object resource);
+            var style = (Style)resource;
+            if (!ReferenceEquals(implicitStyle, style))
+            {
+                implicitStyle = style;
+                if (style == null)
+                    ClearLayerValue(StyleProperty, ValueLayer.ImplicitStyleReference);
+                else
+                    SetLayerValue(StyleProperty, ValueLayer.ImplicitStyleReference, style);
+            }
+
+            object key = DefaultStyleKey;
+            style = key == null ? null : GetRoot()?.ThemeResources?[key] as Style;
+            if (!ReferenceEquals(themeStyle, style))
+                ApplyStyle(style, ValueLayer.DefaultStyle, ref themeStyle);
+        }
+
+        private void ApplyStyle(Style style, ValueLayer layer, ref Style appliedStyle)
         {
             style?.Seal();
             bool targetMatches = style == null || style.TargetType.IsAssignableFrom(GetType());
@@ -37,14 +110,14 @@ namespace Xamlity.Tree
             if (appliedStyle != null)
             {
                 foreach (var setter in appliedStyle.SetterValues)
-                    SetLayerValue(setter.Key, ValueLayer.Style, setter.Value);
+                    SetLayerValue(setter.Key, layer, setter.Value);
             }
             if (previous != null)
             {
                 foreach (var setter in previous.SetterValues)
                 {
                     if (appliedStyle == null || !appliedStyle.SetterValues.ContainsKey(setter.Key))
-                        ClearLayerValue(setter.Key, ValueLayer.Style);
+                        ClearLayerValue(setter.Key, layer);
                 }
             }
             if (!targetMatches)

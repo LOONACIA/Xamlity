@@ -56,6 +56,14 @@ namespace Xamlity.Tree
                 GetVisualChild(index).InvalidateSubtreeMeasure();
         }
 
+        internal void RefreshSubtreeStyles()
+        {
+            if (this is FrameworkElement element)
+                element.RefreshStyles();
+            for (int index = 0; index < VisualChildrenCount; index++)
+                GetVisualChild(index).RefreshSubtreeStyles();
+        }
+
         public void Measure(Size availableSize)
         {
             if (IsMeasureValid && availableSize == previousAvailableSize)
@@ -170,6 +178,7 @@ namespace Xamlity.Tree
             child.VisualParent = this;
             child.InvalidateSubtreeMeasure();
             child.OnInheritanceParentChanged(null);
+            child.RefreshSubtreeStyles();
             InvalidateMeasure();
             InvalidateVisual();
         }
@@ -184,6 +193,7 @@ namespace Xamlity.Tree
             child.VisualParent = null;
             child.InvalidateSubtreeMeasure();
             child.OnInheritanceParentChanged(this);
+            child.RefreshSubtreeStyles();
             InvalidateMeasure();
             InvalidateVisual();
         }

@@ -18,11 +18,21 @@ namespace Xamlity.Markup
 
         public static object Build(XamlDocument document) => Build(document, null);
 
-        public static object Build(XamlDocument document, IXamlAssetResolver assetResolver)
+        public static object Build(XamlDocument document, IXamlAssetResolver assetResolver) =>
+            Build(document, assetResolver, null, null);
+
+        public static object Build(XamlDocument document, IXamlAssetResolver assetResolver,
+            ResourceDictionary applicationResources, ResourceDictionary themeResources)
         {
             if (document == null)
                 throw new ArgumentNullException(nameof(document));
-            return BuildObject(document.Root, assetResolver, new List<object>());
+            // The scope is searched in reverse: lexical resources, application, then theme.
+            var scope = new List<object>();
+            if (themeResources != null)
+                scope.Add(themeResources);
+            if (applicationResources != null)
+                scope.Add(applicationResources);
+            return BuildObject(document.Root, assetResolver, scope);
         }
 
         private static object BuildObject(XamlObjectNode node, IXamlAssetResolver assetResolver, List<object> scope, Style style = null)
